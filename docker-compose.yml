@@ -1,0 +1,15 @@
+services:
+  server:
+    build: ./server
+    ports:
+      - "3001:3001"
+
+  client:
+    build: ./client
+    ports:
+      - "5173:5173"
+    environment:
+      # Inside the compose network the API is reachable as the "server" service.
+      - API_URL=http://server:3001
+    depends_on:
+      - server

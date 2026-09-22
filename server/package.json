@@ -1,0 +1,14 @@
+{
+  "name": "server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "generate-data": "node mock/generate-data.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "ws": "^8.21.3"
+  }
+}
