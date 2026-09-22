@@ -5,5 +5,6 @@ target/
 .idea/
 .vscode/
 *.csv
+!mock_data/*.csv
 *.csv.gz
 data/
