@@ -1,4 +1,48 @@
 services:
+  jobmanager:
+    build: ./docker/flink
+    image: scalablesystems/flink:2.3.0-scalafree
+    command: jobmanager
+    ports:
+      - "8081:8081" # web dashboard + REST submission
+    volumes:
+      - ./target/scala-2.13:/jobs:ro
+      - ./data:/data:ro
+      - ./mock_data:/mock_data:ro
+      - ./out:/out
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: jobmanager
+        jobmanager.memory.process.size: 1600m
+        parallelism.default: 1
+        rest.flamegraph.enabled: true
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/8081' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  taskmanager:
+    # Same image as the jobmanager, which owns the `build:`.
+    image: scalablesystems/flink:2.3.0-scalafree
+    command: taskmanager
+    depends_on:
+      jobmanager:
+        condition: service_healthy
+    volumes:
+      - ./target/scala-2.13:/jobs:ro
+      - ./data:/data:ro
+      - ./mock_data:/mock_data:ro
+      - ./out:/out
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: jobmanager
+        taskmanager.memory.process.size: 4096m
+        taskmanager.numberOfTaskSlots: 4
+
   server:
     build: ./server
     ports:
