@@ -1,6 +1,8 @@
 target/
 .bsp/
 .metals/
+project/metals.sbt
+project/project/
 .bloop/
 .idea/
 .vscode/
@@ -8,6 +10,7 @@ target/
 !mock_data/*.csv
 *.csv.gz
 data/
+out/
 
 node_modules/
 dist/
@@ -20,8 +23,6 @@ yarn-error.log*
 .env
 .env.*
 !.env.example
-.vscode/
-.idea/
 *.swp
 .DS_Store
 Thumbs.db

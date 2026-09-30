@@ -6,11 +6,11 @@ Deadline: **27.11.2026** · Decisions locked: **Flink as SPE**, **everything run
 
 ## Epic 0 — Setup & decisions
 
-- [ ] **E0.1 Add Flink to sbt**
+- [x] **E0.1 Add Flink to sbt** — done: Flink 2.3.0, Java DataStream API from Scala 2.13, smoke job `tick.FlinkSmokeJob` verified locally.
 
   The repo is currently a plain sbt project on Scala 2.13.16 (`build.sbt`), but Flink's first-class Scala support targets 2.12, and 2.13 artifact coverage varies by Flink version. Add the Flink dependencies (streaming API, runtime, test harness) to `build.sbt` and resolve the compatibility question first: either downgrade the project to Scala 2.12 or use the Java DataStream API from Scala, which is the most future-proof route. Acceptance: a minimal hello-world Flink job compiles and runs locally, and the chosen approach is recorded in the README or a short ADR note.
 
-- [ ] **E0.2 Add Flink to docker-compose**
+- [x] **E0.2 Add Flink to docker-compose** — done: JobManager + TaskManager (4 slots) in `docker-compose.yml`, custom Scala-free image in `docker/flink/`, submission workflow (CLI + dashboard) in the README. Verified: full stack up, job submitted at `-p 4`, results match the local run.
 
   The whole project runs locally, so the Flink runtime needs to live in the local docker stack alongside the existing `server` and `client` services. Add a JobManager and at least one TaskManager to `docker-compose.yml` with sensible memory limits and a mounted volume for job jars/results, and document the job submission workflow (`flink run` CLI vs. web dashboard) in the README. Acceptance: `docker compose up --build` brings up the full stack and a packaged job can be submitted to it following only the README.
 
@@ -106,7 +106,7 @@ Deadline: **27.11.2026** · Decisions locked: **Flink as SPE**, **everything run
 
   `client/src/Chart.jsx` calls `chart.timeScale().fitContent()` inside `onmessage`, so every replayed window resets the viewport and the user can never zoom or pan during a replay. Fit once on the first points (or on symbol change) instead.
 
-- [ ] **B3 — `.gz` input claimed but unsupported**
+- [x] **B3 — `.gz` input claimed but unsupported** — fixed: usage string now reads `runMain tick.ParseBenchmark <trading-data.csv>`, no `.gz` claim. Flink reads the CSVs via `FileSource`, so gzip support was never needed here.
 
   `Main.scala` advertises `run <trading-data.csv[.gz]>` but `TickSource` opens files with a plain `BufferedReader`, so a gzipped file would be read as garbage. Either pipe through `GZIPInputStream` or fix the usage string to match reality — whichever survives contact with how the Flink job will actually read data (likely the latter).
 
@@ -114,7 +114,7 @@ Deadline: **27.11.2026** · Decisions locked: **Flink as SPE**, **everything run
 
   `Chart.jsx` builds `ws://${location.host}/ws`, which fails on any https-served deployment (it needs `wss://`). Derive the scheme from `location.protocol`. Low priority given the local-only plan, but it's a one-line fix.
 
-- [ ] **B5 — File reader never closed**
+- [x] **B5 — File reader never closed** — fixed: `TickSource` deleted and its reader inlined into `ParseBenchmark` under `Using.resource`, which closes on both normal exit and exception.
 
   `TickSource.lines()` creates a `BufferedReader` that is never closed on iterator exhaustion, leaking the underlying file handle. Mostly harmless in one-shot CLI runs, but it matters once this parsing code is reused by the Flink source or longer-running jobs. Wrap in `Using`-style management.
 
@@ -126,7 +126,7 @@ Deadline: **27.11.2026** · Decisions locked: **Flink as SPE**, **everything run
 
   The server dies with an uncaught stack trace if the replay CSV is missing (`readFileSync` at `server/index.js`), and the client's `/api/symbols` fetch has no error path, leaving a permanently empty dropdown on failure. Add graceful errors on both sides — cheap insurance for the live demo.
 
-- [ ] **B8 — NaN stats on empty input**
+- [x] **B8 — NaN stats on empty input** — fixed: `ParseBenchmark` guards `linesRead == 0` and prints `events kept: 0 (empty input)`. Verified against an empty file.
 
   `Main.scala` divides by `linesRead` without a zero guard, so running against an empty file prints `NaN%`. Two-line fix while touching the parser.
 
