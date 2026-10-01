@@ -1,16 +1,16 @@
 target/
 .bsp/
 .metals/
-project/metals.sbt
-project/project/
+scala/project/metals.sbt
+scala/project/project/
 .bloop/
 .idea/
 .vscode/
 *.csv
-!mock_data/*.csv
+!data/mock/*.csv
 *.csv.gz
-data/
-out/
+data/full/
+output/
 
 node_modules/
 dist/

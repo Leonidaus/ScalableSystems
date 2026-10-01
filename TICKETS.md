@@ -10,7 +10,7 @@ Deadline: **27.11.2026** · Decisions locked: **Flink as SPE**, **everything run
 
   The repo is currently a plain sbt project on Scala 2.13.16 (`build.sbt`), but Flink's first-class Scala support targets 2.12, and 2.13 artifact coverage varies by Flink version. Add the Flink dependencies (streaming API, runtime, test harness) to `build.sbt` and resolve the compatibility question first: either downgrade the project to Scala 2.12 or use the Java DataStream API from Scala, which is the most future-proof route. Acceptance: a minimal hello-world Flink job compiles and runs locally, and the chosen approach is recorded in the README or a short ADR note.
 
-- [x] **E0.2 Add Flink to docker-compose** — done: JobManager + TaskManager (4 slots) in `docker-compose.yml`, custom Scala-free image in `docker/flink/`, submission workflow (CLI + dashboard) in the README. Verified: full stack up, job submitted at `-p 4`, results match the local run.
+- [x] **E0.2 Add Flink to docker-compose** — done: JobManager + TaskManager (4 slots) in `docker-compose.yml`, custom Scala-free image in `scala/docker/`, submission workflow (CLI + dashboard) in the README. Verified: full stack up, job submitted at `-p 4`, results match the local run.
 
   The whole project runs locally, so the Flink runtime needs to live in the local docker stack alongside the existing `server` and `client` services. Add a JobManager and at least one TaskManager to `docker-compose.yml` with sensible memory limits and a mounted volume for job jars/results, and document the job submission workflow (`flink run` CLI vs. web dashboard) in the README. Acceptance: `docker compose up --build` brings up the full stack and a packaged job can be submitted to it following only the README.
 
@@ -34,7 +34,7 @@ Deadline: **27.11.2026** · Decisions locked: **Flink as SPE**, **everything run
 
 - [ ] **E1.1 Flink CSV source**
 
-  Implement the job input: a bounded `FileSource` over the `mock_data/*.csv` files, parsing each line with the same column mapping the existing `TickParser` uses (ID+exchange at index 0, SecType at 1, Last at 21, Trading time at 23, Trading date at 26, with the system Date as fallback). Events must carry event-time timestamps built in the Europe/Paris zone, and the watermark strategy must follow the ordering decision from E0.3. Rows without a positive Last price are not trades and must be filtered out, consistent with the existing parser.
+  Implement the job input: a bounded `FileSource` over the `data/mock/*.csv` files, parsing each line with the same column mapping the existing `TickParser` uses (ID+exchange at index 0, SecType at 1, Last at 21, Trading time at 23, Trading date at 26, with the system Date as fallback). Events must carry event-time timestamps built in the Europe/Paris zone, and the watermark strategy must follow the ordering decision from E0.3. Rows without a positive Last price are not trades and must be filtered out, consistent with the existing parser.
 
 - [ ] **E1.2 Tumbling 5-min windows**
 
@@ -66,7 +66,7 @@ Deadline: **27.11.2026** · Decisions locked: **Flink as SPE**, **everything run
 
 - [ ] **E3.1 Wire real output into server**
 
-  Replace the `npm run generate-data` workflow with a documented path from Flink job output to the file the server replays, and update the README accordingly (the TICKETS-era README still presents the two tracks as unconnected). Depends on B1 — the server cannot consume ~11M real rows until its memory/rescan problem is fixed. Acceptance: a fresh clone following the README goes from raw `mock_data/` to a live chart of real computed data.
+  Replace the `npm run generate-data` workflow with a documented path from Flink job output to the file the server replays, and update the README accordingly (the TICKETS-era README still presents the two tracks as unconnected). Depends on B1 — the server cannot consume ~11M real rows until its memory/rescan problem is fixed. Acceptance: a fresh clone following the README goes from raw `data/mock/` to a live chart of real computed data.
 
 - [ ] **E3.2 Verify subscription semantics**
 

@@ -1,0 +1,6 @@
+# Everything the sbt build stage does NOT need is excluded, so the build
+# context stays small even with server/node_modules present.
+*
+!build.sbt
+!project/
+!src/

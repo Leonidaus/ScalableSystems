@@ -1,15 +1,43 @@
 services:
+  kafka:
+    # KRaft mode: broker + controller in one process, no ZooKeeper.
+    image: apache/kafka:3.9.0
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+
+  # Scala producer: replays the mock CSVs into the 'ticks' topic forever.
+  producer:
+    image: scalablesystems/flink:2.3.0-scalafree
+    depends_on:
+      - kafka
+    volumes:
+      - ./data/mock:/mock_data:ro
+    command: ["java", "-cp", "/jobs/scalable-systems-0.1.0.jar", "tick.TickPublisher"]
+
   jobmanager:
-    build: ./docker/flink
+    # Multi-stage build: an sbt stage assembles the fat JAR, the runtime stage
+    # is stock Flink minus flink-scala_2.12 with the JAR baked in at /jobs.
+    build:
+      context: ./scala
+      dockerfile: docker/Dockerfile
     image: scalablesystems/flink:2.3.0-scalafree
     command: jobmanager
     ports:
       - "8081:8081" # web dashboard + REST submission
     volumes:
-      - ./target/scala-2.13:/jobs:ro
-      - ./data:/data:ro
-      - ./mock_data:/mock_data:ro
-      - ./out:/out
+      - ./data/full:/data:ro
+      - ./data/mock:/mock_data:ro
+      - ./output:/out
     environment:
       - |
         FLINK_PROPERTIES=
@@ -32,16 +60,39 @@ services:
       jobmanager:
         condition: service_healthy
     volumes:
-      - ./target/scala-2.13:/jobs:ro
-      - ./data:/data:ro
-      - ./mock_data:/mock_data:ro
-      - ./out:/out
+      - ./data/full:/data:ro
+      - ./data/mock:/mock_data:ro
+      - ./output:/out
     environment:
       - |
         FLINK_PROPERTIES=
         jobmanager.rpc.address: jobmanager
         taskmanager.memory.process.size: 4096m
         taskmanager.numberOfTaskSlots: 4
+
+  # One-shot: waits for the cluster, then submits the baked-in JAR so
+  # `docker compose up --build` needs no manual submission step.
+  submit:
+    image: scalablesystems/flink:2.3.0-scalafree
+    depends_on:
+      jobmanager:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+      producer:
+        condition: service_started
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: jobmanager
+        rest.address: jobmanager
+    command:
+      - bash
+      - -c
+      - |
+        until flink list >/dev/null 2>&1; do sleep 2; done
+        flink run -p 4 -c tick.EmaJob /jobs/scalable-systems-0.1.0.jar
+    restart: "no"
 
   server:
     build: ./server
