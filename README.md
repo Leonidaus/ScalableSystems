@@ -2,7 +2,7 @@
 
 CS-E4780 course project: detect trading trends in DEBS 2022 financial tick
 data — EMA 38/100 crossovers with buy/sell advisories, computed per symbol
-over 5-minute tumbling windows (see `task.pdf`).
+over 5-minute tumbling windows.
 
 ## Data flow
 
@@ -31,7 +31,7 @@ No tools needed on the host — the fat JAR is built by an sbt stage inside
 Docker (`scala/docker/Dockerfile`). Flink dashboard: http://localhost:8081
 (`server` on :3001 and `client` on :5173 also start, still fed by mock data).
 
-## TODO (per task.pdf)
+## TODO
 
 1. **EMA per symbol (Query 1)** — fold each window close into
    `EMA_j(w) = Close(w)·2/(1+j) + EMA_j(w-1)·(1-2/(1+j))`, j ∈ {38, 100},
