@@ -14,6 +14,7 @@ libraryDependencies ++= Seq(
   "org.apache.flink" % "flink-clients"       % flinkVersion % Provided,
   "org.apache.flink" % "flink-connector-files" % flinkVersion % Provided,
   "org.apache.flink" % "flink-test-utils"    % flinkVersion % Test,
+  "com.github.sbt"   % "junit-interface"     % "0.13.3"     % Test,
   "org.apache.logging.log4j" % "log4j-slf4j-impl" % log4jVersion % Provided,
   "org.apache.logging.log4j" % "log4j-core"       % log4jVersion % Provided,
   "org.apache.logging.log4j" % "log4j-api"        % log4jVersion % Provided,
