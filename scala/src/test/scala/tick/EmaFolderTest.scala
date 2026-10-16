@@ -89,4 +89,31 @@ class EmaFolderTest {
     // b only ever saw its own two closes.
     assertEquals(22.0 * 2.0 / 39.0 * (37.0 / 39.0) + 23.0 * 2.0 / 39.0, rb.ema38, 1e-12)
   }
+
+  @Test
+  def firstWindowIsBuyFromTheZeroSeed(): Unit = {
+    val folder = new EmaFolder
+    assertEquals(Advisory.Buy, folder.fold(tick("MOCK.NL", W1, 100.0)).get.advisory)
+    // Rising closes keep EMA38 above EMA100: no further advisory.
+    assertEquals(Advisory.None, folder.fold(tick("MOCK.NL", W2, 200.0)).get.advisory)
+  }
+
+  @Test
+  def fallingClosesProduceExactlyOneSell(): Unit = {
+    // Close 100, then zeros: after n zero windows EMA38 = (200/39)·(37/39)^n
+    // and EMA100 = (200/101)·(99/101)^n, which cross first at
+    // n > ln(39/101) / ln((37/39)/(99/101)) ≈ 29.15, i.e. n = 30.
+    val folder = new EmaFolder
+    val results = (0 until 40).map(i => folder.fold(tick("MOCK.NL", W1 + i * 300000L, if (i == 0) 100.0 else 0.0)).get)
+    val advisories = results.zipWithIndex.filter(_._1.advisory.nonEmpty).map { case (r, i) => (i, r.advisory) }
+    assertEquals(Seq((0, Advisory.Buy), (30, Advisory.Sell)), advisories)
+  }
+
+  @Test
+  def skippedDuplicateWindowEmitsNoAdvisory(): Unit = {
+    val folder = new EmaFolder
+    assertEquals(Advisory.Buy, folder.fold(tick("MOCK.NL", W1, 100.0)).get.advisory)
+    // A replayed first window would be a BUY again if it were folded.
+    assertTrue(folder.fold(tick("MOCK.NL", W1, 100.0)).isEmpty)
+  }
 }

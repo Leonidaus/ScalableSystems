@@ -11,23 +11,47 @@ object EmaMath {
 
   def next(prevEma: Double, close: Double, alpha: Double): Double =
     close * alpha + prevEma * (1.0 - alpha)
+
+  /**
+   * BUY when EMA38 crosses above EMA100 between windows w−1 and w, SELL on the reverse, otherwise "".
+   * Equality at w−1 counts as the starting side, equality at w never fires.
+   */
+  def crossover(prev38: Double, prev100: Double, ema38: Double, ema100: Double): String =
+    if (ema38 > ema100 && prev38 <= prev100) Advisory.Buy
+    else if (ema38 < ema100 && prev38 >= prev100) Advisory.Sell
+    else Advisory.None
 }
 
-/** One per-symbol, per-window EMA snapshot emitted by [[KeyedEmaFold]]. */
+/**
+ * Advisory values. Plain strings rather than case objects or Option: records
+ * fall back to Kryo, which deserializes Scala singletons into fresh instances
+ * and breaks `==` against them.
+ */
+object Advisory {
+  val Buy  = "BUY"
+  val Sell = "SELL"
+  val None = ""
+}
+
+/** One per-symbol, per-window EMA snapshot emitted by [[KeyedEmaFold]]; `advisory` is BUY, SELL or "". */
 final case class EmaResult(
     symbol: String,
     windowStart: Long,
     windowEnd: Long,
     close: Double,
     ema38: Double,
-    ema100: Double
+    ema100: Double,
+    advisory: String
 )
 
 /**
  * Folds per-window closes into the spec's EMA38/EMA100 chain for a single
  * symbol: `EMA_j(w) = Close(w)·2/(1+j) + EMA_j(w−1)·(1−2/(1+j))`, seeded with
- * EMA = 0 on the first window. Windows with no events never produce a close,
- * so the chain simply carries the previous EMA forward across them.
+ * EMA = 0 on the first window, and detects crossovers between consecutive
+ * folded windows. Taken literally, the seed makes every symbol's first window
+ * a BUY (0 ≤ 0 before, EMA38 > EMA100 after for any positive close). 
+ * Windows with no events never produce a close, so the chain simply carries 
+ * the previous EMA forward across them.
  *
  * The producer replays the mock week forever and the window operator allows 7
  * days of lateness, so every close arrives once per replay pass (a pass
@@ -47,9 +71,12 @@ final class EmaFolder {
     val windowStart = event.timestamp - event.timestamp % 300000L
     if (!seen.add(windowStart)) None
     else {
-      ema38  = EmaMath.next(ema38, event.last, EmaMath.Alpha38)
-      ema100 = EmaMath.next(ema100, event.last, EmaMath.Alpha100)
-      Some(EmaResult(event.symbol, windowStart, windowStart + 300000L, event.last, ema38, ema100))
+      val prev38  = ema38
+      val prev100 = ema100
+      ema38  = EmaMath.next(prev38, event.last, EmaMath.Alpha38)
+      ema100 = EmaMath.next(prev100, event.last, EmaMath.Alpha100)
+      val advisory = EmaMath.crossover(prev38, prev100, ema38, ema100)
+      Some(EmaResult(event.symbol, windowStart, windowStart + 300000L, event.last, ema38, ema100, advisory))
     }
   }
 }

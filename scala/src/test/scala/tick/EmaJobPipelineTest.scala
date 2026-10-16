@@ -52,13 +52,16 @@ class EmaJobPipelineTest {
     // Seed EMA_0 = 0: first EMA is close·2/(1+j).
     assertEquals(101.0 * 2.0 / 39.0, mock.head.ema38, 1e-9)
     assertEquals(101.0 * 2.0 / 101.0, mock.head.ema100, 1e-9)
+    assertEquals(Advisory.Buy, mock.head.advisory) // spec-literal BUY from the zero seed
     assertEquals(W2, mock(1).windowStart)
     assertEquals(120.0, mock(1).close, 0.0)
     assertEquals(120.0 * 2.0 / 39.0 + (101.0 * 2.0 / 39.0) * (37.0 / 39.0), mock(1).ema38, 1e-9)
+    assertEquals(Advisory.None, mock(1).advisory)
 
     val rdsa = bySymbol("RDSA.NL")
     assertEquals(1, rdsa.size)
     assertEquals(W1, rdsa.head.windowStart)
     assertEquals(22.0 * 2.0 / 39.0, rdsa.head.ema38, 1e-9)
+    assertEquals(Advisory.Buy, rdsa.head.advisory)
   }
 }

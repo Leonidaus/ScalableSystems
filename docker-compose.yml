@@ -14,6 +14,9 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # The job's output topics ('ema-results', 'advisories') are auto-created
+      # on first write; give them the same 3 partitions as 'ticks'.
+      KAFKA_NUM_PARTITIONS: 3
 
   # Scala producer: replays the mock CSVs into the 'ticks' topic forever.
   producer:

@@ -7,8 +7,8 @@ over 5-minute tumbling windows.
 ## Data flow
 
 ```
-data/mock/*.csv  ->  tick.TickPublisher  ->  Kafka 'ticks'  ->  tick.EmaJob  ->  5-min windows  ->  EMA38/100  ->  print()
-one week of ticks      Scala producer          3 partitions      Flink job    per symbol close   keyed fold     TM stdout
+data/mock/*.csv  ->  tick.TickPublisher  ->  Kafka 'ticks'  ->  tick.EmaJob  ->  5-min windows  ->  EMA38/100 + crossover  ->  Kafka 'ema-results' (every window)
+one week of ticks      Scala producer          3 partitions      Flink job    per symbol close   keyed fold                  Kafka 'advisories'  (BUY/SELL only)
                       replays forever
 ```
 
@@ -19,14 +19,25 @@ windows. Each window emits one result: the last trade by event time in that
 window (the window's close). A keyed fold (`KeyedEmaFold`) then chains each
 symbol's closes into the spec's EMA38/EMA100 — seeded EMA₀ = 0, deduping by
 window start so the producer's replay loop can't fold the same window twice —
-and prints one `EmaResult` snapshot per symbol per window to TaskManager
-stdout. The crossover logic is not implemented yet.
+flags crossovers between consecutive windows as BUY/SELL advisories. Every 
+`EmaResult` snapshot goes to the `ema-results` topic, thecrossovers alone to 
+`advisories`; both are keyed by symbol with JSON values:
+
+```json
+{"symbol":"RDSA.NL","window_start":"2021-11-08T08:00:00Z","window_end":"2021-11-08T08:05:00Z","close":20.5328,"ema38":1.0529641025641026,"ema100":0.406590099009901,"advisory":"BUY"}
+```
+
+`advisory` is `"BUY"`, `"SELL"` or `""`. The spec is applied literally: with
+EMA₀ = 0 the previous window counts as EMA38 ≤ EMA100, so every symbol's
+first window is a BUY.
 
 ## How to run
 
 ```sh
 docker compose up -d --build                                  # build + start everything
-docker compose logs -f taskmanager | grep EmaResult            # watch the EMA snapshots
+# watch the advisories (swap in --topic ema-results for every window's EMAs)
+docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
+  --bootstrap-server localhost:9092 --topic advisories --from-beginning --property print.key=true
 docker compose down                                            # stop
 ```
 
@@ -43,10 +54,12 @@ Docker (`scala/docker/Dockerfile`). Flink dashboard: http://localhost:8081
    the producer's replay loop re-fires windows within the 7-day lateness, and
    folding a window twice would corrupt the chain. Unit tests: `EmaFolderTest`,
    `EmaJobPipelineTest`.
-2. **Crossover advisories (Query 2)** — buy when EMA38 crosses above EMA100,
-   sell on the reverse, comparing window w and w-1 (Eq. 1-4).
+2. **Crossover advisories (Query 2)** — done: `EmaMath.crossover` flags BUY
+   when EMA38 crosses above EMA100 and SELL on the reverse, comparing window
+   w and w−1 (Eqs. 1–4), published to the `advisories` topic. Unit tests:
+   `CrossoverTest`, `EmaFolderTest`, `EmaResultJsonTest`.
 3. **Visualization** — feed advisories/EMAs to the server+client (currently
-   replaying generated mock data); publish results to a second Kafka topic.
+   replaying generated mock data) by consuming `ema-results`/`advisories`.
 4. **Full dataset** — run over `data/full/` (289M events) for the
    performance-evaluation section of the report.
 5. **Report** — 4-5 pages, ACM template: architecture, implementation,

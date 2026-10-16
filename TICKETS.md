@@ -54,11 +54,11 @@ Deadline: **27.11.2026** · Decisions locked: **Flink as SPE**, **everything run
 
 ## Epic 2 — Query 2 (crossovers)
 
-- [ ] **E2.1 BUY/SELL detection**
+- [x] **E2.1 BUY/SELL detection** — done: `EmaMath.crossover` (spec Eqs. 1–4) runs inside `EmaFolder.fold` against the previous window's EMAs, so the replay dedupe also guarantees one advisory per crossover. Results go to Kafka as JSON keyed by symbol: every window to `ema-results`, crossovers to `advisories`. Spec applied literally: the EMA₀ = 0 seed makes each symbol's first window a BUY.
 
   Implement crossover detection exactly per spec Eqs. 1–4: a BUY advisory when EMA38 crosses from ≤ to > EMA100 between consecutive evaluated windows, a SELL advisory on the opposite cross. The logic should live in the same Flink job as Query 1, comparing each window's EMAs against that symbol's previous window — the same sign-change rule `generate-data.js` already implements, which makes it a useful cross-check. Exactly one advisory event per crossover, emitted at window-evaluation time.
 
-- [ ] **E2.2 Crossover tests**
+- [x] **E2.2 Crossover tests** — done: `CrossoverTest` (both directions, flat stretches, equality on either side, repeated crossings), `EmaFolderTest` (first-window BUY, hand-derived SELL, no advisory on skipped duplicates), `EmaJobPipelineTest` advisory asserts.
 
   Test with synthetic EMA series covering both crossover directions, flat/no-crossover stretches, repeated crossings, and the boundary case where EMA38 equals EMA100 (the spec's ≤/≥ conditions decide whether that fires). Verify exactly one advisory per qualifying crossover and none otherwise. These cases map directly onto the report's correctness claims and onto the markers the chart renders.
 
