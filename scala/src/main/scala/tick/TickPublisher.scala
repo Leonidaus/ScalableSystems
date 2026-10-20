@@ -65,7 +65,7 @@ object TickPublisher {
     else if (Files.exists(dir)) Seq(dir)
     else Seq.empty
 
-  /** Creates the topic with 3 partitions, retrying until the broker is up. */
+  /** Creates the topic with 12 partitions, retrying until the broker is up. */
   private def createTopic(bootstrap: String, topic: String): Unit = {
     val props = new Properties()
     props.put("bootstrap.servers", bootstrap)
@@ -74,10 +74,10 @@ object TickPublisher {
       val admin = AdminClient.create(props)
       try {
         admin
-          .createTopics(Collections.singletonList(new NewTopic(topic, 3, 1.toShort)))
+          .createTopics(Collections.singletonList(new NewTopic(topic, 12, 1.toShort)))
           .all()
           .get()
-        println(s"topic '$topic' created (3 partitions)")
+        println(s"topic '$topic' created (12 partitions)")
         return
       } catch {
         case e: java.util.concurrent.ExecutionException

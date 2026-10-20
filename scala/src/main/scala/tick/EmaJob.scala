@@ -70,10 +70,11 @@ object EmaJob {
       .assignTimestampsAndWatermarks(
         WatermarkStrategy
           .forBoundedOutOfOrderness[TickEvent](Duration.ofSeconds(5))
-          // With -p 4 and only 3 Kafka partitions, one source subtask is
-          // idle and would otherwise pin the watermark at Long.MinValue,
-          // freezing every window. Idleness excludes such channels from the
-          // downstream watermark minimum.
+          // With -p 8 and 12 Kafka partitions, more source subtasks than
+          // partitions only occur if partitions are raised without recreating
+          // the topic. An idle source subtask would otherwise pin the
+          // watermark at Long.MinValue, freezing every window; idleness
+          // excludes such channels from the downstream watermark minimum.
           .withIdleness(Duration.ofSeconds(10))
           .withTimestampAssigner(new SerializableTimestampAssigner[TickEvent] {
             override def extractTimestamp(e: TickEvent, recordTs: Long): Long = e.timestamp
