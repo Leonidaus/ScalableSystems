@@ -15,8 +15,10 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       # The job's output topics ('ema-results', 'advisories') are auto-created
-      # on first write; give them the same 3 partitions as 'ticks'.
-      KAFKA_NUM_PARTITIONS: 3
+      # on first write; give them the same 12 partitions as 'ticks'.
+      # NOTE: existing topics keep their old partition count — recreate the
+      # volume (or use kafka-topics --alter) to apply this to an old cluster.
+      KAFKA_NUM_PARTITIONS: 12
 
   # Scala producer: replays the mock CSVs into the 'ticks' topic forever.
   producer:
@@ -71,7 +73,9 @@ services:
         FLINK_PROPERTIES=
         jobmanager.rpc.address: jobmanager
         taskmanager.memory.process.size: 4096m
-        taskmanager.numberOfTaskSlots: 4
+        # 8 slots so the job can actually run at -p 8; without matching CPU
+        # cores the extra slots only help if containers span more cores.
+        taskmanager.numberOfTaskSlots: 8
 
   # One-shot: waits for the cluster, then submits the baked-in JAR so
   # `docker compose up --build` needs no manual submission step.
@@ -94,7 +98,7 @@ services:
       - -c
       - |
         until flink list >/dev/null 2>&1; do sleep 2; done
-        flink run -p 4 -c tick.EmaJob /jobs/scalable-systems-0.1.0.jar
+        flink run -p 8 -c tick.EmaJob /jobs/scalable-systems-0.1.0.jar
     restart: "no"
 
   server:
