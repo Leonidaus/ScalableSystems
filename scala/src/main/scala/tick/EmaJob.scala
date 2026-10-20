@@ -82,10 +82,11 @@ object EmaJob {
       .keyBy(_.symbol)
       .window(TumblingEventTimeWindows.of(Duration.ofMinutes(5)))
       // The producer replays the same week over and over; 7 days of lateness
-      // keeps already-fired windows re-firable so the demo stays continuous
-      // (identical data re-emits identical closes). On the full dataset,
-      // consumed once, this has no effect.
-      .allowedLateness(Duration.ofDays(7))
+      // (ALLOWED_LATENESS, ISO-8601) keeps already-fired windows re-firable
+      // so the demo stays continuous (identical data re-emits identical
+      // closes). On the full dataset, consumed once, set it small (e.g.
+      // PT0S): late re-fires only add churn there.
+      .allowedLateness(Duration.parse(sys.env.getOrElse("ALLOWED_LATENESS", "P7D")))
       .reduce((a: TickEvent, b: TickEvent) => if (a.timestamp >= b.timestamp) a else b)
       .name("5min-close")
       // Chained per-symbol EMA38/EMA100 over the window closes. Dedupes by
