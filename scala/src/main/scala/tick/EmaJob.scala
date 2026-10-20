@@ -12,6 +12,7 @@ import org.apache.flink.connector.kafka.source.KafkaSource
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer
 import org.apache.flink.streaming.api.datastream.DataStream
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment
+import org.apache.flink.streaming.api.CheckpointingMode
 import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows
 import org.apache.flink.util.Collector
 import org.apache.kafka.clients.producer.ProducerRecord
@@ -35,6 +36,18 @@ object EmaJob {
     val advisoryTopic = sys.env.getOrElse("ADVISORY_TOPIC", "advisories")
 
     val env = StreamExecutionEnvironment.getExecutionEnvironment
+
+    // CHECKPOINT_INTERVAL_MS > 0 enables checkpointing so the AT_LEAST_ONCE
+    // Kafka sinks flush durably on restart; without checkpoints they emit
+    // best-effort. Off by default: checkpointing costs throughput that pure
+    // speed runs should not pay.
+    sys.env.get("CHECKPOINT_INTERVAL_MS").map(_.toLong).filter(_ > 0).foreach { interval =>
+      val cfg = env.getCheckpointConfig
+      cfg.setCheckpointInterval(interval)
+      cfg.setCheckpointingMode(CheckpointingMode.AT_LEAST_ONCE)
+      cfg.setCheckpointTimeout(interval * 4)
+      cfg.setMinPauseBetweenCheckpoints(interval / 2)
+    }
 
     val source = KafkaSource
       .builder[String]()
