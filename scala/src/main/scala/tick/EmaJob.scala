@@ -86,14 +86,16 @@ object EmaJob {
       // (identical data re-emits identical closes). On the full dataset,
       // consumed once, this has no effect.
       .allowedLateness(Duration.ofDays(7))
-      .reduce((a: TickEvent, b: TickEvent) => if (a.timestamp >= b.timestamp) a else b)
-      .name("5min-close")
-      // Chained per-symbol EMA38/EMA100 over the window closes. Dedupes by
-      // window start: the producer's replay loop re-fires windows (7-day
-      // lateness), and folding a window twice would corrupt the chain.
-      .keyBy(_.symbol)
-      .flatMap(new KeyedEmaFold)
-      .name("ema-38-100")
+      .reduce(
+        (a: TickEvent, b: TickEvent) => if (a.timestamp >= b.timestamp) a else b,
+        new EmaFoldWindowFunction
+      )
+      // Chained per-symbol EMA38/EMA100 over the window closes; the fold runs
+      // inside the window operator (globalState), so no second keyBy/shuffle
+      // after the window is needed. Dedupes by window start: the producer's
+      // replay loop re-fires windows (7-day lateness), and folding a window
+      // twice would corrupt the chain.
+      .name("5min-close-and-ema")
 
   /**
    * JSON records keyed by symbol, so each symbol's results stay ordered within

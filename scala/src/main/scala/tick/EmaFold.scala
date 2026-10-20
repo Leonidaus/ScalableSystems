@@ -1,7 +1,8 @@
 package tick
 
-import org.apache.flink.api.common.functions.{OpenContext, RichFlatMapFunction}
 import org.apache.flink.api.common.state.{ValueState, ValueStateDescriptor}
+import org.apache.flink.streaming.api.functions.windowing.ProcessWindowFunction
+import org.apache.flink.streaming.api.windowing.windows.TimeWindow
 import org.apache.flink.util.Collector
 
 /** Spec EMA constants: alpha_j = 2/(1+j) for j ∈ {38, 100}. */
@@ -82,23 +83,32 @@ final class EmaFolder {
 }
 
 /**
- * Keyed adapter around [[EmaFolder]]: holds one folder per symbol in keyed
- * state so each symbol's EMA chain persists across windows and replay passes.
+ * Window adapter around [[EmaFolder]]: fused onto the window's reduce, it
+ * receives each fired window's single pre-reduced close and folds it into
+ * the per-symbol EMA chain. The folder lives in globalState — per-key state
+ * that persists across windows of this operator — so the pipeline needs only
+ * the one keyBy upstream of the window. (The previous keyBy after the window
+ * re-keyed by the same key and paid a shuffle per window close for nothing.)
  */
-class KeyedEmaFold extends RichFlatMapFunction[TickEvent, EmaResult] {
+final class EmaFoldWindowFunction
+    extends ProcessWindowFunction[TickEvent, EmaResult, String, TimeWindow] {
 
-  private var folder: ValueState[EmaFolder] = _
+  private[this] val descriptor =
+    new ValueStateDescriptor[EmaFolder]("ema-folder", classOf[EmaFolder])
 
-  override def open(ctx: OpenContext): Unit =
-    folder = getRuntimeContext.getState(
-      new ValueStateDescriptor[EmaFolder]("ema-folder", classOf[EmaFolder])
-    )
-
-  override def flatMap(event: TickEvent, out: Collector[EmaResult]): Unit = {
-    val f = Option(folder.value()).getOrElse(new EmaFolder)
-    f.fold(event).foreach { result =>
-      folder.update(f)
-      out.collect(result)
+  override def process(
+      key: String,
+      context: ProcessWindowFunction[TickEvent, EmaResult, String, TimeWindow]#Context,
+      elements: java.lang.Iterable[TickEvent],
+      out: Collector[EmaResult]
+  ): Unit = {
+    val state = context.globalState().getState(descriptor)
+    val f     = Option(state.value()).getOrElse(new EmaFolder)
+    elements.forEach { event =>
+      f.fold(event).foreach { result =>
+        state.update(f)
+        out.collect(result)
+      }
     }
   }
 }
