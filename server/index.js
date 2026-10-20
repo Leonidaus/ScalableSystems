@@ -19,23 +19,28 @@ function parseCsv(text) {
   });
 }
 
-const allRows = parseCsv(readFileSync(CSV_PATH, 'utf8'));
+// Index rows by symbol once at startup: converting and filtering the whole
+// array on every WebSocket subscription is O(n) per client action.
+const rowsBySymbol = new Map();
+for (const raw of parseCsv(readFileSync(CSV_PATH, 'utf8'))) {
+  if (!rowsBySymbol.has(raw.symbol)) rowsBySymbol.set(raw.symbol, []);
+  rowsBySymbol.get(raw.symbol).push({
+    // Lightweight Charts wants the time as unix seconds.
+    time: Math.floor(new Date(raw.window_end).getTime() / 1000),
+    ema38: Number(raw.ema38),
+    ema100: Number(raw.ema100),
+    advisory: raw.advisory,
+  });
+}
+const symbols = [...rowsBySymbol.keys()];
 
 function rowsFor(symbol) {
-  return allRows
-    .filter((r) => r.symbol === symbol)
-    .map((r) => ({
-      // Lightweight Charts wants the time as unix seconds.
-      time: Math.floor(new Date(r.window_end).getTime() / 1000),
-      ema38: Number(r.ema38),
-      ema100: Number(r.ema100),
-      advisory: r.advisory,
-    }));
+  return rowsBySymbol.get(symbol) ?? [];
 }
 
 const app = express();
 app.get('/api/symbols', (_req, res) => {
-  res.json([...new Set(allRows.map((r) => r.symbol))]);
+  res.json(symbols);
 });
 
 const server = app.listen(PORT, () => console.log(`listening on http://localhost:${PORT}`));
