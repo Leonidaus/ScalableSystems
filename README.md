@@ -17,13 +17,13 @@ one week of ticks      Scala producer          3 partitions      Flink job    pe
                                                                                                                                         client (React + lightweight-charts)
 ```
 
-The producer republishes the mock CSVs line by line, forever. The Flink job
+The producer republishes the mock CSVs' trade lines, forever. The Flink job
 consumes the topic, parses each line into a `TickEvent`, groups events by
 symbol, and buckets each symbol's ticks into 5-minute event-time tumbling
 windows. Each window emits one result: the last trade by event time in that
 window (the window's close). A keyed fold (`KeyedEmaFold`) then chains each
-symbol's closes into the spec's EMA38/EMA100 — seeded EMA₀ = 0, deduping by
-window start so the producer's replay loop can't fold the same window twice —
+symbol's closes into the spec's EMA38/EMA100 — seeded EMA₀ = 0, skipping any
+close whose window start is not after the last folded one (replay passes) —
 flags crossovers between consecutive windows as BUY/SELL advisories. Every 
 `EmaResult` snapshot goes to the `ema-results` topic, thecrossovers alone to 
 `advisories`; both are keyed by symbol with JSON values:
@@ -46,6 +46,14 @@ docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
 docker compose down                                            # stop
 ```
 
+Real data instead of mock: put the DEBS CSVs (a file or a directory) under
+`data/` and point the producer at them; it then publishes once at full speed:
+
+```sh
+docker compose down    # start from an empty 'ticks' topic
+TICKS_INPUT=/data/day-08-11-21.csv DELAY_MS=0 LOOP=false docker compose up -d --build
+```
+
 No tools needed on the host — the fat JAR is built by an sbt stage inside
 Docker (`scala/docker/Dockerfile`). Flink dashboard: http://localhost:8081
 (`server` on :3001 and `client` on :5173 also start, still fed by mock data).
@@ -55,9 +63,10 @@ Docker (`scala/docker/Dockerfile`). Flink dashboard: http://localhost:8081
 1. **EMA per symbol (Query 1)** — done: `KeyedEmaFold` folds each window
    close into `EMA_j(w) = Close(w)·2/(1+j) + EMA_j(w−1)·(1−2/(1+j))`, j ∈ {38,
    100}, EMA₀ = 0, in keyed per-symbol state, skipping closes whose window
-   start (`windowStart = ts − ts % 300000`) a replay pass has already folded —
-   the producer's replay loop re-fires windows within the 7-day lateness, and
-   folding a window twice would corrupt the chain. Unit tests: `EmaFolderTest`,
+   start (`windowStart = ts − ts % 300000`) is not after the last folded one —
+   folding a window twice or out of order would corrupt the chain. Window
+   lateness defaults to 0 (`ALLOWED_LATENESS`, ISO-8601), so state stays O(1)
+   per symbol. Unit tests: `EmaFolderTest`,
    `EmaJobPipelineTest`.
 2. **Crossover advisories (Query 2)** — done: `EmaMath.crossover` flags BUY
    when EMA38 crosses above EMA100 and SELL on the reverse, comparing window

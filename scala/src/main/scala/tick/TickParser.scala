@@ -1,7 +1,7 @@
 package tick
 
 import java.time.{LocalDate, ZoneId}
-import scala.collection.mutable
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Parses one raw CSV line of the DEBS 2022 trading data into a [[TickEvent]].
@@ -87,11 +87,12 @@ object TickParser {
   }
 
   // The file has one date per file (plus a handful of neighbours), so cache midnight per date string.
-  private val dayCache = mutable.HashMap.empty[String, Long]
+  // Concurrent: this object is shared by every parsing subtask in a TaskManager JVM.
+  private val dayCache = new ConcurrentHashMap[String, java.lang.Long]()
 
   // "DD-MM-YYYY" -> epoch millis of local midnight in Europe/Paris, or Long.MinValue if malformed.
   private def dayStartMillis(d: String): Long =
-    dayCache.getOrElseUpdate(d, {
+    dayCache.computeIfAbsent(d, d => {
       if (d.length != 10 || d.charAt(2) != '-' || d.charAt(5) != '-') Long.MinValue
       else
         try {

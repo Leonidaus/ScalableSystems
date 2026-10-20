@@ -21,7 +21,7 @@ import org.apache.kafka.clients.producer.ProducerRecord
  * (first window starts at 00:00 CEST — epoch-based timestamps align to it).
  * Each window emits the highest-timestamp tick it contains, i.e. the window's
  * close; a keyed fold then chains closes into the spec's EMA38/EMA100 per
- * symbol, skipping closes whose window a replay pass has already folded.
+ * symbol, skipping closes whose window is not after the last folded one.
  * Query 2: the fold also flags EMA38/EMA100 crossovers as BUY/SELL advisories.
  * Every snapshot goes to the `ema-results` topic, crossovers alone to
  * `advisories`; both keyed by symbol, JSON values ([[EmaResultJson]]).
@@ -33,6 +33,10 @@ object EmaJob {
     val topic         = sys.env.getOrElse("TOPIC", "ticks")
     val emaTopic      = sys.env.getOrElse("EMA_TOPIC", "ema-results")
     val advisoryTopic = sys.env.getOrElse("ADVISORY_TOPIC", "advisories")
+    // ISO-8601, e.g. PT0S or P7D. Re-fired windows are skipped by the fold
+    // anyway, so lateness only costs state: every window lives until
+    // watermark > window end + lateness.
+    val lateness      = Duration.parse(sys.env.getOrElse("ALLOWED_LATENESS", "PT0S"))
 
     val env = StreamExecutionEnvironment.getExecutionEnvironment
 
@@ -45,7 +49,7 @@ object EmaJob {
       .setValueOnlyDeserializer(new SimpleStringSchema())
       .build()
 
-    val results = build(env.fromSource(source, WatermarkStrategy.noWatermarks[String](), "kafka-ticks"))
+    val results = build(env.fromSource(source, WatermarkStrategy.noWatermarks[String](), "kafka-ticks"), lateness)
     results.sinkTo(kafkaSink(bootstrap, emaTopic)).name("ema-results-sink")
     results
       .filter(_.advisory.nonEmpty)
@@ -57,7 +61,7 @@ object EmaJob {
   }
 
   /** Query 1 pipeline: raw CSV lines → per-symbol EMA snapshots. */
-  def build(lines: DataStream[String]): DataStream[EmaResult] =
+  def build(lines: DataStream[String], allowedLateness: Duration = Duration.ZERO): DataStream[EmaResult] =
     lines
       .flatMap(new FlatMapFunction[String, TickEvent] {
         override def flatMap(line: String, out: Collector[TickEvent]): Unit =
@@ -70,10 +74,10 @@ object EmaJob {
       .assignTimestampsAndWatermarks(
         WatermarkStrategy
           .forBoundedOutOfOrderness[TickEvent](Duration.ofSeconds(5))
-          // With -p 4 and only 3 Kafka partitions, one source subtask is
-          // idle and would otherwise pin the watermark at Long.MinValue,
-          // freezing every window. Idleness excludes such channels from the
-          // downstream watermark minimum.
+          // A source subtask without a Kafka partition (parallelism above
+          // the partition count) would otherwise pin the watermark at
+          // Long.MinValue, freezing every window. Idleness excludes such
+          // channels from the downstream watermark minimum.
           .withIdleness(Duration.ofSeconds(10))
           .withTimestampAssigner(new SerializableTimestampAssigner[TickEvent] {
             override def extractTimestamp(e: TickEvent, recordTs: Long): Long = e.timestamp
@@ -81,16 +85,16 @@ object EmaJob {
       )
       .keyBy(_.symbol)
       .window(TumblingEventTimeWindows.of(Duration.ofMinutes(5)))
-      // The producer replays the same week over and over; 7 days of lateness
-      // keeps already-fired windows re-firable so the demo stays continuous
-      // (identical data re-emits identical closes). On the full dataset,
-      // consumed once, this has no effect.
-      .allowedLateness(Duration.ofDays(7))
+      // Zero by default: late ticks are dropped instead of keeping every
+      // window (and its timer) in state. With 7 days of lateness a one-week
+      // run never frees any window state. The producer's replay passes are
+      // all late, so they are dropped here rather than in the fold.
+      .allowedLateness(allowedLateness)
       .reduce((a: TickEvent, b: TickEvent) => if (a.timestamp >= b.timestamp) a else b)
       .name("5min-close")
-      // Chained per-symbol EMA38/EMA100 over the window closes. Dedupes by
-      // window start: the producer's replay loop re-fires windows (7-day
-      // lateness), and folding a window twice would corrupt the chain.
+      // Chained per-symbol EMA38/EMA100 over the window closes. Skips any
+      // close not after the last folded window: folding a window twice, or
+      // out of order, would corrupt the chain.
       .keyBy(_.symbol)
       .flatMap(new KeyedEmaFold)
       .name("ema-38-100")
