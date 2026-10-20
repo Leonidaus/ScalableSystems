@@ -25,6 +25,9 @@ services:
       - kafka
     volumes:
       - ./data/mock:/mock_data:ro
+    environment:
+      # Pace the replayed feed so the demo looks live; omit for max throughput.
+      - DELAY_MS=2
     command: ["java", "-cp", "/jobs/scalable-systems-0.1.0.jar", "tick.TickPublisher"]
 
   jobmanager:
