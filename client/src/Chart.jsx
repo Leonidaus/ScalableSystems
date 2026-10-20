@@ -18,6 +18,10 @@ export default function Chart({ symbol }) {
     const markers = [];
     const markersPlugin = createSeriesMarkers(ema38, markers);
 
+    // Fit the viewport to the first data point, then follow the live edge;
+    // refitting on every row (bug B2) made the chart jump constantly.
+    let fitted = false;
+
     const ws = new WebSocket(`ws://${location.host}/ws`);
     ws.onopen = () => ws.send(symbol);
     ws.onmessage = (event) => {
@@ -36,7 +40,12 @@ export default function Chart({ symbol }) {
         });
         markersPlugin.setMarkers(markers);
       }
-      chart.timeScale().fitContent();
+      if (!fitted) {
+        chart.timeScale().fitContent();
+        fitted = true;
+      } else {
+        chart.timeScale().scrollToRealTime();
+      }
     };
 
     // Closing the socket stops the server-side replay.
