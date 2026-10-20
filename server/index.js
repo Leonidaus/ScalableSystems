@@ -1,57 +1,82 @@
-// Express serves the symbol list; the EMA rows are streamed over a WebSocket.
+// Express serves the symbol list; EMA rows are streamed over a WebSocket.
+// Rows come from the Flink job via the 'ema-results' Kafka topic and are
+// indexed by symbol once as they arrive (no rescan per request).
 import express from 'express';
 import { WebSocketServer } from 'ws';
-import { readFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { Kafka } from 'kafkajs';
 
 const PORT = process.env.PORT ?? 3001;
-const INTERVAL_MS = 300; // how fast the recorded windows are replayed
-const CSV_PATH = join(dirname(fileURLToPath(import.meta.url)), 'mock', 'data', 'sample.csv');
+const KAFKA_BOOTSTRAP = process.env.KAFKA_BOOTSTRAP ?? 'localhost:9092';
+const TOPIC = process.env.TOPIC ?? 'ema-results';
 
-// Tiny CSV parser: first line is the header, no quoting/escaping support.
-function parseCsv(text) {
-  const [header, ...lines] = text.trim().split('\n');
-  const cols = header.split(',');
-  return lines.map((line) => {
-    const values = line.split(',');
-    return Object.fromEntries(cols.map((c, i) => [c, values[i] ?? '']));
-  });
+// symbol -> array of rows in arrival (= window) order, as sent to the client.
+const rowsBySymbol = new Map();
+
+// One entry per connected client waiting for live rows of its symbol.
+const listeners = new Set();
+
+function index(row) {
+  const rows = rowsBySymbol.get(row.symbol) ?? [];
+  rows.push(row);
+  rowsBySymbol.set(row.symbol, rows);
+  for (const l of listeners) if (l.symbol === row.symbol) l.send({ type: 'row', row });
 }
 
-const allRows = parseCsv(readFileSync(CSV_PATH, 'utf8'));
-
-function rowsFor(symbol) {
-  return allRows
-    .filter((r) => r.symbol === symbol)
-    .map((r) => ({
-      // Lightweight Charts wants the time as unix seconds.
-      time: Math.floor(new Date(r.window_end).getTime() / 1000),
-      ema38: Number(r.ema38),
-      ema100: Number(r.ema100),
-      advisory: r.advisory,
-    }));
+// Kafka may be down or the topic not yet created (the Flink job creates it on
+// first write), so retry on startup failures; the HTTP/WebSocket side stays up
+// regardless. Once running, kafkajs restarts the consumer on its own after a
+// crash, so nothing is retried past this point.
+async function consume() {
+  const kafka = new Kafka({ clientId: 'viz-server', brokers: [KAFKA_BOOTSTRAP] });
+  for (;;) {
+    const consumer = kafka.consumer({ groupId: 'viz-server' });
+    try {
+      await consumer.connect();
+      await consumer.subscribe({ topics: [TOPIC], fromBeginning: true });
+      await consumer.run({
+        eachMessage: async ({ message }) => {
+          const r = JSON.parse(message.value.toString());
+          index({
+            symbol: r.symbol,
+            // Lightweight Charts wants the time as unix seconds.
+            time: Math.floor(Date.parse(r.window_end) / 1000),
+            close: r.close,
+            ema38: r.ema38,
+            ema100: r.ema100,
+            advisory: r.advisory,
+          });
+        },
+      });
+      return;
+    } catch (err) {
+      console.error(`consumer failed: ${err.message}, retrying in 5s`);
+      await consumer.disconnect().catch(() => {});
+      await new Promise((r) => setTimeout(r, 5000));
+    }
+  }
 }
 
 const app = express();
 app.get('/api/symbols', (_req, res) => {
-  res.json([...new Set(allRows.map((r) => r.symbol))]);
+  res.json([...rowsBySymbol.keys()]);
 });
 
 const server = app.listen(PORT, () => console.log(`listening on http://localhost:${PORT}`));
 
-// The client sends a symbol, we replay that symbol's windows one at a time.
+// The client sends a symbol, we reply with everything we have for it in one
+// history message, then keep streaming new rows as they arrive.
 const wss = new WebSocketServer({ server, path: '/ws' });
 wss.on('connection', (socket) => {
-  let timer;
+  let listener = null;
   socket.on('message', (data) => {
-    clearInterval(timer);
-    const rows = rowsFor(String(data));
-    let i = 0;
-    timer = setInterval(() => {
-      if (i >= rows.length) return clearInterval(timer);
-      socket.send(JSON.stringify(rows[i++]));
-    }, INTERVAL_MS);
+    if (listener) listeners.delete(listener);
+    listener = { symbol: String(data), send: (msg) => socket.send(JSON.stringify(msg)) };
+    listeners.add(listener);
+    listener.send({ type: 'history', rows: rowsBySymbol.get(listener.symbol) ?? [] });
   });
-  socket.on('close', () => clearInterval(timer));
+  socket.on('close', () => {
+    if (listener) listeners.delete(listener);
+  });
 });
+
+consume();

@@ -101,6 +101,10 @@ services:
     build: ./server
     ports:
       - "3001:3001"
+    depends_on:
+      - kafka
+    environment:
+      - KAFKA_BOOTSTRAP=kafka:9092
 
   client:
     build: ./client

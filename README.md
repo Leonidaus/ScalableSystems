@@ -9,7 +9,12 @@ over 5-minute tumbling windows.
 ```
 data/mock/*.csv  ->  tick.TickPublisher  ->  Kafka 'ticks'  ->  tick.EmaJob  ->  5-min windows  ->  EMA38/100 + crossover  ->  Kafka 'ema-results' (every window)
 one week of ticks      Scala producer          3 partitions      Flink job    per symbol close   keyed fold                  Kafka 'advisories'  (BUY/SELL only)
-                      replays forever
+                      replays forever                                                                                   |
+                                                                                                                        v
+                                                                               server (kafkajs consumer, per-symbol index)  <-  history + live rows over WebSocket
+                                                                                                                                                        |
+                                                                                                                                                        v
+                                                                                                                                        client (React + lightweight-charts)
 ```
 
 The producer republishes the mock CSVs line by line, forever. The Flink job

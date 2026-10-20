@@ -5,14 +5,22 @@ export default function App() {
   const [symbols, setSymbols] = useState([]);
   const [symbol, setSymbol] = useState('');
 
-  // Load the list of available symbols once, and select the first one.
+  // Symbols appear as the Flink job produces output, so keep asking until
+  // the list is no longer empty.
   useEffect(() => {
-    fetch('/api/symbols')
-      .then((r) => r.json())
-      .then((list) => {
-        setSymbols(list);
-        setSymbol(list[0] ?? '');
-      });
+    const timer = setInterval(async () => {
+      try {
+        const list = await (await fetch('/api/symbols')).json();
+        if (list.length > 0) {
+          setSymbols(list);
+          setSymbol((s) => s || list[0]);
+          clearInterval(timer);
+        }
+      } catch {
+        // Server not up yet; try again on the next tick.
+      }
+    }, 2000);
+    return () => clearInterval(timer);
   }, []);
 
   return (
