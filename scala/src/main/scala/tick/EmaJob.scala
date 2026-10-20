@@ -6,10 +6,13 @@ import org.apache.flink.api.common.eventtime.{SerializableTimestampAssigner, Wat
 import org.apache.flink.api.common.functions.FlatMapFunction
 import org.apache.flink.api.common.serialization.SimpleStringSchema
 import org.apache.flink.connector.base.DeliveryGuarantee
+import org.apache.flink.connector.file.src.FileSource
+import org.apache.flink.connector.file.src.reader.TextLineInputFormat
 import org.apache.flink.connector.kafka.sink.{KafkaRecordSerializationSchema, KafkaSink}
 import org.apache.flink.connector.kafka.sink.KafkaRecordSerializationSchema.KafkaSinkContext
 import org.apache.flink.connector.kafka.source.KafkaSource
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer
+import org.apache.flink.core.fs.Path
 import org.apache.flink.streaming.api.datastream.DataStream
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment
 import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows
@@ -36,16 +39,7 @@ object EmaJob {
 
     val env = StreamExecutionEnvironment.getExecutionEnvironment
 
-    val source = KafkaSource
-      .builder[String]()
-      .setBootstrapServers(bootstrap)
-      .setTopics(topic)
-      .setGroupId("tick-job")
-      .setStartingOffsets(OffsetsInitializer.earliest())
-      .setValueOnlyDeserializer(new SimpleStringSchema())
-      .build()
-
-    val results = build(env.fromSource(source, WatermarkStrategy.noWatermarks[String](), "kafka-ticks"))
+    val results = build(lines(env, bootstrap, topic))
     results.sinkTo(kafkaSink(bootstrap, emaTopic)).name("ema-results-sink")
     results
       .filter(_.advisory.nonEmpty)
@@ -55,6 +49,30 @@ object EmaJob {
 
     env.execute("ema-job")
   }
+
+  /**
+   * Raw CSV lines from Kafka (default, SOURCE=kafka) or, for one-shot
+   * evaluation runs over the full dataset (SOURCE=file, INPUT=<path>), a
+   * bounded FileSource that reads at disk speed and terminates when the
+   * input is exhausted (ticket E1.1). Both feed the same [[build]] pipeline.
+   */
+  private def lines(env: StreamExecutionEnvironment, bootstrap: String, topic: String): DataStream[String] =
+    sys.env.getOrElse("SOURCE", "kafka") match {
+      case "file" =>
+        val input  = new Path(sys.env.getOrElse("INPUT", "/data"))
+        val source = FileSource.forRecordStreamFormat(new TextLineInputFormat(StandardCharsets.UTF_8.name()), input).build()
+        env.fromSource(source, WatermarkStrategy.noWatermarks[String](), "file-ticks")
+      case _ =>
+        val source = KafkaSource
+          .builder[String]()
+          .setBootstrapServers(bootstrap)
+          .setTopics(topic)
+          .setGroupId("tick-job")
+          .setStartingOffsets(OffsetsInitializer.earliest())
+          .setValueOnlyDeserializer(new SimpleStringSchema())
+          .build()
+        env.fromSource(source, WatermarkStrategy.noWatermarks[String](), "kafka-ticks")
+    }
 
   /** Query 1 pipeline: raw CSV lines → per-symbol EMA snapshots. */
   def build(lines: DataStream[String]): DataStream[EmaResult] =
