@@ -20,7 +20,10 @@ object TickPublisher {
     val bootstrap = sys.env.getOrElse("KAFKA_BOOTSTRAP", "kafka:9092")
     val topic     = sys.env.getOrElse("TOPIC", "ticks")
     val inputDir  = Paths.get(sys.env.getOrElse("INPUT", "/mock_data"))
-    val delayMs   = sys.env.getOrElse("DELAY_MS", "2").toLong
+    // Throttle between lines, for making the replayed feed look live. 0 (the
+    // default) publishes as fast as Kafka accepts; set DELAY_MS in the
+    // environment to pace demo replays.
+    val delayMs   = sys.env.getOrElse("DELAY_MS", "0").toLong
 
     val csvs = listCsvs(inputDir)
     if (csvs.isEmpty) {
@@ -48,7 +51,7 @@ object TickPublisher {
           producer.send(new ProducerRecord[String, String](topic, line))
           sent += 1
         }
-        Thread.sleep(delayMs)
+        if (delayMs > 0) Thread.sleep(delayMs)
       }
       producer.flush()
       println(s"[pass $pass] $sent lines published to '$topic', replaying")
