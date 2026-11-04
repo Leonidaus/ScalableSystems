@@ -53,24 +53,24 @@ final case class EmaResult(
  * Windows with no events never produce a close, so the chain simply carries 
  * the previous EMA forward across them.
  *
- * The producer replays the mock week forever and the window operator allows 7
- * days of lateness, so every close arrives once per replay pass (a pass
- * restarts at the week's first window, so a plain "last window seen" counter
- * cannot detect the duplicates). Folding a window twice would corrupt the
- * chain, hence the set of already-folded window starts, bounded by the number
- * of windows that actually contain events (≤ 2016 per symbol-week).
+ * A symbol's windows fire in event-time order, so a close whose window start
+ * is not after the last folded one is a duplicate or a stray late firing
+ * (e.g. a replay pass, or a window re-fired under allowed lateness). Folding
+ * it would corrupt the chain, so it is skipped. State stays O(1) per symbol
+ * no matter how many windows the run covers.
  */
 final class EmaFolder {
 
-  private var ema38  = 0.0
-  private var ema100 = 0.0
-  private val seen   = new java.util.HashSet[java.lang.Long]()
+  private var ema38           = 0.0
+  private var ema100          = 0.0
+  private var lastWindowStart = Long.MinValue
 
-  /** @return the new EMA snapshot, or None if this close's window was already folded. */
+  /** @return the new EMA snapshot, or None if this close's window is not after the last folded one. */
   def fold(event: TickEvent): Option[EmaResult] = {
     val windowStart = event.timestamp - event.timestamp % 300000L
-    if (!seen.add(windowStart)) None
+    if (windowStart <= lastWindowStart) None
     else {
+      lastWindowStart = windowStart
       val prev38  = ema38
       val prev100 = ema100
       ema38  = EmaMath.next(prev38, event.last, EmaMath.Alpha38)
@@ -83,7 +83,7 @@ final class EmaFolder {
 
 /**
  * Keyed adapter around [[EmaFolder]]: holds one folder per symbol in keyed
- * state so each symbol's EMA chain persists across windows and replay passes.
+ * state so each symbol's EMA chain persists across windows.
  */
 class KeyedEmaFold extends RichFlatMapFunction[TickEvent, EmaResult] {
 

@@ -15,16 +15,22 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       # The job's output topics ('ema-results', 'advisories') are auto-created
-      # on first write; give them the same 3 partitions as 'ticks'.
+      # on first write with 3 partitions; 'ticks' is created by the producer.
       KAFKA_NUM_PARTITIONS: 3
 
   # Scala producer: replays the mock CSVs into the 'ticks' topic forever.
+  # Real data: TICKS_INPUT=/data/<file or dir> DELAY_MS=0 LOOP=false.
   producer:
     image: scalablesystems/flink:2.3.0-scalafree
     depends_on:
       - kafka
     volumes:
-      - ./data/mock:/mock_data:ro
+      - ./data:/data:ro
+    environment:
+      INPUT: ${TICKS_INPUT:-/data/mock}
+      DELAY_MS: ${DELAY_MS:-2}
+      LOOP: ${LOOP:-true}
+      PARTITIONS: ${PARTITIONS:-12}
     command: ["java", "-cp", "/jobs/scalable-systems-0.1.0.jar", "tick.TickPublisher"]
 
   jobmanager:
