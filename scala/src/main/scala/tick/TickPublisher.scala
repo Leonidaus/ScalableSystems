@@ -2,7 +2,8 @@ package tick
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path, Paths}
-import java.time.Duration
+import java.time.{Duration, Instant, ZoneId}
+import java.time.format.DateTimeFormatter
 import java.util.Collections
 import java.util.Properties
 import org.apache.kafka.clients.admin.{AdminClient, NewTopic}
@@ -14,16 +15,19 @@ import scala.jdk.CollectionConverters._
  * Streams the DEBS CSVs line by line into a Kafka topic, then loops.
  * Only trade lines are published (~22% of the real data), cut after the last
  * column the job reads; they stay raw CSV, so parsing stays in the Flink job.
+ * SPEED paces publishing by the lines' arrival timestamps (1 = real time,
+ * N = N times faster, max = as fast as possible); see [[ReplayClock]].
  */
 object TickPublisher {
 
   def main(args: Array[String]): Unit = {
     val bootstrap = sys.env.getOrElse("KAFKA_BOOTSTRAP", "kafka:9092")
     val topic     = sys.env.getOrElse("TOPIC", "ticks")
-    val inputDir  = Paths.get(sys.env.getOrElse("INPUT", "/mock_data"))
-    val delayMs   = sys.env.getOrElse("DELAY_MS", "2").toLong
-    // LOOP=false publishes the input once and exits (full-dataset runs).
-    val loop      = sys.env.getOrElse("LOOP", "true").toBoolean
+    val inputDir  = Paths.get(sys.env.getOrElse("INPUT", "/data/mock"))
+    val speed     = parseSpeed(sys.env.getOrElse("SPEED", "1000"))
+    // Data gaps longer than this (nights, the weekend) are shortened to it; 0 keeps them.
+    val maxGapS   = sys.env.getOrElse("MAX_GAP_S", "300").toLong
+    val loop      = sys.env.getOrElse("LOOP", "false").toBoolean
     // Caps the job's source parallelism: one Kafka partition per subtask at most.
     val partitions = sys.env.getOrElse("PARTITIONS", "12").toInt
 
@@ -45,13 +49,21 @@ object TickPublisher {
     props.put("compression.type", "lz4")
 
     val producer = new KafkaProducer[String, String](props)
+    val clock    = new ReplayClock(speed, maxGapS * 1000)
+    println(
+      if (speed > 0) s"publishing at ${speed}x the data's pace, gaps capped at ${maxGapS}s"
+      else "publishing at max speed")
     var pass = 0
     // The mock data is a single week, so the producer replays it forever to
     // keep the pipeline streaming. A real deployment would consume a live
     // feed instead of looping over files.
     do {
       pass += 1
+      clock.reset()
       var sent = 0L
+      var arrival = -1L
+      var lastReport = System.nanoTime()
+      var sentAtReport = 0L
       // Streamed line by line: the full-day files are several GB.
       for (csv <- csvs) {
         val reader = Files.newBufferedReader(csv, StandardCharsets.UTF_8)
@@ -59,10 +71,24 @@ object TickPublisher {
           var line = reader.readLine()
           while (line != null) {
             if (TickParser.parse(line).isDefined) {
+              if (speed > 0) {
+                arrival = TickParser.arrivalMillis(line)
+                clock.await(arrival)
+              }
               producer.send(new ProducerRecord[String, String](topic, trim(line)))
               sent += 1
+              val now = System.nanoTime()
+              if (now - lastReport >= ReportEveryNanos) {
+                val rate = (sent - sentAtReport) * 1e9 / (now - lastReport)
+                val paced =
+                  if (speed > 0 && arrival >= 0)
+                    s", data time ${ReportTime.format(Instant.ofEpochMilli(arrival))}, lag ${clock.lagMs} ms"
+                  else ""
+                println(f"[replay] $sent%d sent, $rate%.0f/s$paced")
+                lastReport = now
+                sentAtReport = sent
+              }
             }
-            if (delayMs > 0) Thread.sleep(delayMs)
             line = reader.readLine()
           }
         } finally reader.close()
@@ -71,6 +97,19 @@ object TickPublisher {
       println(s"[pass $pass] $sent trades published to '$topic'${if (loop) ", replaying" else ""}")
     } while (loop)
     producer.close()
+  }
+
+  private val ReportEveryNanos = 10L * 1000000000
+  private val ReportTime = DateTimeFormatter.ofPattern("dd-MM HH:mm:ss").withZone(ZoneId.of("Europe/Paris"))
+
+  /** SPEED: "max" or 0 for no pacing, otherwise a positive factor over real time. */
+  private[tick] def parseSpeed(s: String): Double = {
+    val v =
+      if (s.trim.equalsIgnoreCase("max")) 0.0
+      else s.trim.toDoubleOption.getOrElse(Double.NaN)
+    if (!(v >= 0) || v.isInfinite)
+      throw new IllegalArgumentException(s"SPEED must be 'max' or a number >= 0, got '$s'")
+    v
   }
 
   /** The line up to the job's last column (Trading date, index 26); later columns are never read. */

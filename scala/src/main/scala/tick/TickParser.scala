@@ -59,6 +59,22 @@ object TickParser {
     else Some(TickEvent(symbol, secType, price, effectiveDate, tradingTime, dayMillis + timeMillis))
   }
 
+  /**
+   * Epoch millis of the system Date + Time columns (when Infront received the
+   * event; the files are ordered by it), or -1 for comment, header or malformed lines.
+   */
+  def arrivalMillis(line: String): Long = {
+    if (line.isEmpty || line.charAt(0) == '#') return -1
+    val c1 = line.indexOf(',', line.indexOf(',') + 1)
+    val c2 = if (c1 < 0) -1 else line.indexOf(',', c1 + 1)
+    if (c2 < 0) return -1
+    var c3 = line.indexOf(',', c2 + 1)
+    if (c3 < 0) c3 = line.length
+    val timeMillis = parseTimeMillis(line.substring(c2 + 1, c3))
+    val dayMillis  = dayStartMillis(line.substring(c1 + 1, c2))
+    if (timeMillis < 0 || dayMillis == Long.MinValue) -1 else dayMillis + timeMillis
+  }
+
   private def parseDouble(s: String): Double =
     try s.toDouble catch { case _: NumberFormatException => Double.NaN }
 

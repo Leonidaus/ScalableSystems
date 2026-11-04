@@ -8,7 +8,7 @@ over 5-minute tumbling windows.
 
 ```
 data/mock/*.csv  ->  tick.TickPublisher  ->  Kafka 'ticks'  ->  tick.EmaJob  ->  5-min windows  ->  EMA38/100 + crossover  ->  Kafka 'ema-results' (every window)
-one week of ticks      Scala producer          3 partitions      Flink job    per symbol close   keyed fold                  Kafka 'advisories'  (BUY/SELL only)
+one week of ticks      Scala producer          12 partitions      Flink job    per symbol close   keyed fold                  Kafka 'advisories'  (BUY/SELL only)
                       replays forever                                                                                   |
                                                                                                                         v
                                                                                server (kafkajs consumer, per-symbol index)  <-  history + live rows over WebSocket
@@ -25,7 +25,7 @@ window (the window's close). A keyed fold (`KeyedEmaFold`) then chains each
 symbol's closes into the spec's EMA38/EMA100 — seeded EMA₀ = 0, skipping any
 close whose window start is not after the last folded one (replay passes) —
 flags crossovers between consecutive windows as BUY/SELL advisories. Every 
-`EmaResult` snapshot goes to the `ema-results` topic, thecrossovers alone to 
+`EmaResult` snapshot goes to the `ema-results` topic, the crossovers alone to 
 `advisories`; both are keyed by symbol with JSON values:
 
 ```json
@@ -46,13 +46,30 @@ docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
 docker compose down                                            # stop
 ```
 
-Real data instead of mock: put the DEBS CSVs (a file or a directory) under
-`data/` and point the producer at them; it then publishes once at full speed:
+Real data instead of mock: download the DEBS CSVs (~25 GB, gitignored) into
+`data/full/` and point the producer at them.
 
 ```sh
-docker compose down    # start from an empty 'ticks' topic
-TICKS_INPUT=/data/day-08-11-21.csv DELAY_MS=0 LOOP=false docker compose up -d --build
+scripts/download-data.sh                 # all 7 days; or e.g. scripts/download-data.sh 08-11-21
+docker compose down                      # start from an empty 'ticks' topic
+TICKS_INPUT=/data/full SPEED=1000 LOOP=false docker compose up -d --build
 ```
+
+### Replay speed
+
+The producer paces publishing by each line's arrival time (the system
+`Date`/`Time` columns, which the files are ordered by); the job's windows
+still use `Trading time` (event time). One caveat: the job's watermark
+idleness timeout (10 s) runs on wall-clock time, so at very low speeds which
+late events get dropped can differ from a max-speed run.
+
+- `SPEED` — `1` real time, `N` N× faster, `max` (or `0`) no pacing.
+  Compose default `1000` (a mock trading day in ~30 s); the code's default is `max`.
+- `MAX_GAP_S` — data gaps longer than this many seconds (nights, the weekend)
+  are shortened to it; `0` keeps them. Compose default `60`, code default `300`.
+
+Every 10 s the producer logs the trades sent, the achieved rate and, when paced,
+the current data time and how far behind schedule it is (`lag`).
 
 No tools needed on the host — the fat JAR is built by an sbt stage inside
 Docker (`scala/docker/Dockerfile`). Flink dashboard: http://localhost:8081
