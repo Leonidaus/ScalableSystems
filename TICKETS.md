@@ -14,11 +14,15 @@ Deadline: **27.11.2026** · Decisions locked: **Flink as SPE**, **everything run
 
   The whole project runs locally, so the Flink runtime needs to live in the local docker stack alongside the existing `server` and `client` services. Add a JobManager and at least one TaskManager to `docker-compose.yml` with sensible memory limits and a mounted volume for job jars/results, and document the job submission workflow (`flink run` CLI vs. web dashboard) in the README. Acceptance: `docker compose up --build` brings up the full stack and a packaged job can be submitted to it following only the README.
 
-- [ ] **E0.3 DECIDE event ordering strategy**
+- [x] **E0.3 DECIDE event ordering strategy** — done: correctness runs
+  pre-sort the sample by event time (`prepare_sample.py`), the live pipeline
+  keeps 5-s bounded out-of-orderness plus the fold's window-start dedupe.
 
   The spec states the total order of events per symbol cannot be assumed, which directly affects watermarking in Flink: an event arriving after the watermark has passed its timestamp is dropped, and dropped price events silently corrupt the EMA chain. Evaluate the two realistic options — a one-time pre-sort pass of the CSVs by timestamp (simplest, makes watermarks trivial since the bounded source is then in order) versus a watermark strategy with generous allowed lateness (messy, because a re-fired window would need to retract its contribution to the EMA chain). Recommendation is the pre-sort pass, implemented either as a small script or a Flink batch job. Output: the decision written down, since the report's correctness section will be judged on how ordering was handled.
 
-- [ ] **E0.4 DECIDE empty-window semantics**
+- [x] **E0.4 DECIDE empty-window semantics** — done: carry-forward. An empty
+  window emits nothing, the EMA stays unchanged until the symbol's next
+  evaluated window, and crossovers compare consecutive evaluated windows.
 
   The spec defines `Close_{s,wi}` only when a price event exists in the window, but says nothing about windows where a symbol has no events — and with 5504 symbols over 5-minute windows, empty windows are common. Decide whether the EMA stays unchanged (carry-forward, the standard convention and the recommendation) or decays toward zero, and record the decision explicitly. This choice affects the correctness claims in the report, so it must be stated and defended, not left implicit.
 
@@ -88,7 +92,11 @@ Deadline: **27.11.2026** · Decisions locked: **Flink as SPE**, **everything run
 
   Run the evaluation the report's performance section demands, all on local hardware: throughput (events/s) over the full 289M-event week, scaling runs at parallelism 1/2/4/8 via TaskManager slots, and CPU/memory utilization captured with local tooling (Flink metrics plus OS-level profiling). Record the exact machine specs since there's no cloud dimension to describe. Start this by mid-October — it's the canary that tells you whether the Flink setup from Epic 0 performs or needs rethinking, and it feeds directly into report figures.
 
-- [ ] **E5.2 Correctness validation**
+- [x] **E5.2 Correctness validation** — done: `scripts/reference.py` is an
+  independent implementation of both queries; it matches `tick.LocalRun` (the
+  real pipeline, bounded, parallelism 1) exactly on 2009/2009 windows over a
+  stratified 40-symbol, 511k-line sample of 08-11-21. See README
+  "Correctness validation".
 
   Build an independent reference implementation of both queries (e.g., pandas over per-symbol groups) and diff its output against the Flink job over a sample of symbols, including some with sparse events where carry-forward actually triggers. An independent implementation is what makes the correctness claim credible — self-referential tests alone won't convince a grader. Reuse this reference in E1.5 rather than hand-computing fixtures twice.
 
