@@ -7,6 +7,49 @@ export default function App() {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
+  const [clock, setClock] = useState('');
+
+  // Simulation clock: the replay's data time, advanced at SPEED times the
+  // wall-clock pace since the first result arrived.
+  const [status, setStatus] = useState(null);
+
+  useEffect(() => {
+    const timer = setInterval(async () => {
+      try {
+        const s = await (await fetch('/api/status')).json();
+        if (s.startedAt) {
+          setStatus(s);
+          clearInterval(timer);
+        }
+      } catch {
+        // Server not up yet; try again on the next tick.
+      }
+    }, 500);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (status && typeof status.speed === 'number') {
+        const ms = status.dataStart + (Date.now() - status.startedAt) * status.speed;
+        setClock(
+          new Date(ms).toLocaleString('en-GB', {
+            weekday: 'short',
+            day: '2-digit',
+            month: 'short',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+          }) + ` (sim, ${status.speed}×)`
+        );
+      } else if (status) {
+        setClock('max speed');
+      } else {
+        setClock('');
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [status]);
 
   // Symbols appear as the Flink job produces output, so keep asking until
   // the list is no longer empty.
@@ -22,7 +65,7 @@ export default function App() {
       } catch {
         // Server not up yet; try again on the next tick.
       }
-    }, 2000);
+    }, 500);
     return () => clearInterval(timer);
   }, []);
 
@@ -45,7 +88,10 @@ export default function App() {
 
   return (
     <div style={{ fontFamily: 'sans-serif', padding: 16 }}>
-      <h1>Trading Indicators</h1>
+      <h1 style={{ display: 'flex', justifyContent: 'space-between' }}>
+        Trading Indicators
+        <span style={{ color: '#666', fontWeight: 'normal', fontSize: '0.6em' }}>{clock}</span>
+      </h1>
       <label>
         Symbol:{' '}
         <input
@@ -105,8 +151,19 @@ export default function App() {
           ))}
         </ul>
       )}
-      <p style={{ color: '#666' }}>Showing: {symbol || '—'}</p>
-      <Chart symbol={symbol} />
+      {symbol ? (
+        <>
+          <p style={{ color: '#666' }}>Showing: {symbol}</p>
+          <Chart symbol={symbol} />
+        </>
+      ) : (
+        <p style={{ color: '#666' }}>
+          No tickers yet — the Flink job takes ~15 s to start after
+          `docker compose up`, and the first windows close after 5 minutes of
+          data time (a few seconds at replay speeds). This page updates
+          itself, no reload needed.
+        </p>
+      )}
     </div>
   );
 }

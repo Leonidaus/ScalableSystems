@@ -72,7 +72,14 @@ Deadline: **27.11.2026** · Decisions locked: **Flink as SPE**, **everything run
 
   Replace the `npm run generate-data` workflow with a documented path from Flink job output to the file the server replays, and update the README accordingly (the TICKETS-era README still presents the two tracks as unconnected). Depends on B1 — the server cannot consume ~11M real rows until its memory/rescan problem is fixed. Acceptance: a fresh clone following the README goes from raw `data/mock/` to a live chart of real computed data.
 
-- [ ] **E3.2 Verify subscription semantics**
+- [x] **E3.2 Verify subscription semantics** — done: the job has no symbol
+  filter (`keyBy(_.symbol)` only), so metrics are computed for every symbol in
+  the stream; the server stores all rows but forwards each row and the
+  per-symbol history only to clients whose subscribed symbol matches
+  (`l.symbol === row.symbol`, `rowsBySymbol.get(listener.symbol)`). The
+  client's search box is the subscription: picking a symbol reconnects the
+  WebSocket with it. Verified live by switching TTE.FR → SIE.ETR in the UI.
+  Note: a symbol is subscribable only once it has produced its first result.
 
   Spec relaxation 3 requires all metrics to be computed for every symbol but updates delivered only for subscribed ones. Confirm the current design satisfies this: the Flink job computes all 5504 symbols, and the server's per-symbol WebSocket replay means a client only receives the symbol it asks for. Write the confirmation down for the report's correctness section, since it's an explicit spec requirement that's easy to claim but should be demonstrated.
 
