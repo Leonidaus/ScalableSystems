@@ -75,6 +75,34 @@ No tools needed on the host — the fat JAR is built by an sbt stage inside
 Docker (`scala/docker/Dockerfile`). Flink dashboard: http://localhost:8081
 (`server` on :3001 and `client` on :5173 also start, still fed by mock data).
 
+## Correctness validation
+
+`scripts/reference.py` implements both queries independently of the Flink job
+and `scripts/compare.py` diffs it against a real run of the pipeline
+(`tick.LocalRun`, the same `EmaJob.build` code path without Kafka) over a
+sample of real data. `prepare_sample.py` picks symbols across the dataset's
+long tail (head, mid, sparse, bid/ask-only) and pre-sorts them by event time,
+so no event is late for its window.
+
+```sh
+scripts/download-data.sh 08-11-21
+python3 scripts/prepare_sample.py data/full/debs2022-gc-trading-day-08-11-21.csv data/samples/sample-real-08-11.csv
+python3 scripts/reference.py data/samples/sample-real-08-11.csv output/ref-real.csv
+docker run --rm --user "$(id -u):$(id -g)" \
+  -v "$PWD/data/samples:/samples" -v "$PWD/output:/out" \
+  scalablesystems/flink:2.3.0-scalafree \
+  java -cp "/jobs/scalable-systems-0.1.0.jar:/opt/flink/lib/*" \
+  tick.LocalRun /samples/sample-real-08-11.csv /out/actual-real.csv
+python3 scripts/compare.py output/ref-real.csv output/actual-real.csv data/samples/sample-real-08-11.csv
+```
+
+On 08-11-21 (40 symbols, 511k lines): 2009/2009 evaluated windows match
+exactly (closes, EMAs, advisories); 59k non-trade lines are filtered
+identically by both sides; 20 of 38 symbols cross empty windows between
+trades (the EMA carries forward, E0.4); the 2 bid/ask-only symbols produce
+no output. Only BUY advisories can fire within one day from the EMA₀ = 0
+seed; the SELL path is covered by `CrossoverTest`/`EmaFolderTest`.
+
 ## TODO
 
 1. **EMA per symbol (Query 1)** — done: `KeyedEmaFold` folds each window
