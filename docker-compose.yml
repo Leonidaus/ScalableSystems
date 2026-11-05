@@ -31,7 +31,7 @@ services:
       INPUT: ${TICKS_INPUT:-/data/mock}
       SPEED: ${SPEED:-1000}
       MAX_GAP_S: ${MAX_GAP_S:-300}
-      LOOP: ${LOOP:-false}
+      LOOP: ${LOOP:-true}
       PARTITIONS: ${PARTITIONS:-12}
     command: ["java", "-cp", "/jobs/scalable-systems-0.1.0.jar", "tick.TickPublisher"]
 
@@ -113,6 +113,8 @@ services:
       - kafka
     environment:
       - KAFKA_BOOTSTRAP=kafka:9092
+      # The UI's simulation clock runs at the replay speed.
+      - SPEED=${SPEED:-1000}
 
   client:
     build: ./client
