@@ -51,21 +51,21 @@ export default function App() {
     return () => clearInterval(timer);
   }, [status]);
 
-  // Symbols appear as the Flink job produces output, so keep asking until
-  // the list is no longer empty.
+  // Symbols appear gradually as the Flink job produces each one's first
+  // result (on real data only a handful exist in the first windows), so
+  // keep refreshing the list for as long as the page is open.
   useEffect(() => {
     const timer = setInterval(async () => {
       try {
         const list = await (await fetch('/api/symbols')).json();
         if (list.length > 0) {
-          setSymbols(list);
+          setSymbols((prev) => (prev.length === list.length ? prev : list));
           setSymbol((s) => s || list[0]);
-          clearInterval(timer);
         }
       } catch {
         // Server not up yet; try again on the next tick.
       }
-    }, 500);
+    }, 2000);
     return () => clearInterval(timer);
   }, []);
 
