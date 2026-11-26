@@ -18,7 +18,7 @@ import org.apache.kafka.clients.producer.ProducerRecord
 
 /**
  * Query 1: 5-minute tumbling event-time windows per symbol
- * (first window starts at 00:00 CEST — epoch-based timestamps align to it).
+ * (first window starts at 00:00 — epoch-based timestamps align to it).
  * Each window emits the highest-timestamp tick it contains, i.e. the window's
  * close; a keyed fold then chains closes into the spec's EMA38/EMA100 per
  * symbol, skipping closes whose window is not after the last folded one.
@@ -68,9 +68,8 @@ object EmaJob {
           TickParser.parse(line).foreach(out.collect)
       })
       .name("parse-ticks")
-      // Event time from the tick's own CEST timestamp. Ticks arrive out of
-      // order: the task says per-symbol order cannot be assumed, and Kafka's
-      // round-robin partitioning shuffles arrivals too.
+      // Event time from the tick's own timestamp. Ticks arrive out of
+      // order: the task says per-symbol order cannot be assumed.
       .assignTimestampsAndWatermarks(
         WatermarkStrategy
           .forBoundedOutOfOrderness[TickEvent](Duration.ofSeconds(5))
@@ -86,9 +85,7 @@ object EmaJob {
       .keyBy(_.symbol)
       .window(TumblingEventTimeWindows.of(Duration.ofMinutes(5)))
       // Zero by default: late ticks are dropped instead of keeping every
-      // window (and its timer) in state. With 7 days of lateness a one-week
-      // run never frees any window state. The producer's replay passes are
-      // all late, so they are dropped here rather than in the fold.
+      // window (and its timer) in state.
       .allowedLateness(allowedLateness)
       .reduce((a: TickEvent, b: TickEvent) => if (a.timestamp >= b.timestamp) a else b)
       .name("5min-close")
@@ -102,18 +99,13 @@ object EmaJob {
   /**
    * JSON records keyed by symbol, so each symbol's results stay ordered within
    * a partition. AT_LEAST_ONCE only flushes on checkpoints, which are off, so
-   * delivery is effectively best effort; a restarted job recomputes from the
-   * earliest offset, and consumers dedupe by (symbol, window_start).
+   * delivery is effectively best effort.
    */
   private def kafkaSink(bootstrap: String, topic: String): KafkaSink[EmaResult] =
     KafkaSink
       .builder[EmaResult]()
       .setBootstrapServers(bootstrap)
       .setRecordSerializer(new KafkaRecordSerializationSchema[EmaResult] {
-        // No record timestamp, so the producer stamps wall-clock time. The
-        // builder's schema would carry the 2021 event time over, and Kafka's
-        // 7-day time retention then deletes every record as soon as its
-        // segment rolls.
         override def serialize(
             r: EmaResult,
             ctx: KafkaSinkContext,
