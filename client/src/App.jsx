@@ -40,7 +40,7 @@ export default function App() {
             hour: '2-digit',
             minute: '2-digit',
             second: '2-digit',
-          }) + ` (sim, ${status.speed}×)`
+          }) + ` (sim, ${status.speed}x)`
         );
       } else if (status) {
         setClock('max speed');
@@ -87,10 +87,10 @@ export default function App() {
   };
 
   return (
-    <div style={{ fontFamily: 'sans-serif', padding: 16 }}>
+    <div style={{ padding: 16 }}>
       <h1 style={{ display: 'flex', justifyContent: 'space-between' }}>
-        Trading Indicators
-        <span style={{ color: '#666', fontWeight: 'normal', fontSize: '0.6em' }}>{clock}</span>
+        Live EMA signals
+        <span style={{ fontSize: '0.6em' }}>{clock}</span>
       </h1>
       <label>
         Symbol:{' '}
@@ -153,13 +153,13 @@ export default function App() {
       )}
       {symbol ? (
         <>
-          <p style={{ color: '#666' }}>Showing: {symbol}</p>
+          <p>Showing: {symbol}</p>
           <Chart symbol={symbol} />
         </>
       ) : (
-        <p style={{ color: '#666' }}>
-          No tickers yet — the Flink job takes ~15 s to start after
-          `docker compose up`, and the first windows close after 5 minutes of
+        <p>
+          No tickers yet, the Flink job takes ~15 s to start after
+          docker compose up, and the first windows close after 5 minutes of
           data time (a few seconds at replay speeds). This page updates
           itself, no reload needed.
         </p>
