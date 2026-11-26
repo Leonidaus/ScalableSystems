@@ -1,6 +1,5 @@
 services:
   kafka:
-    # KRaft mode: broker + controller in one process, no ZooKeeper.
     image: apache/kafka:3.9.0
     environment:
       KAFKA_NODE_ID: 1
@@ -13,49 +12,33 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      # The job's output topics ('ema-results', 'advisories') are auto-created
-      # on first write with 3 partitions; 'ticks' is created by the producer.
       KAFKA_NUM_PARTITIONS: 3
 
-  # Scala producer: replays the mock CSVs into the 'ticks' topic,
-  # paced by the data's arrival times.
-  # Real data: TICKS_INPUT=/data/full SPEED=500 LOOP=false.
   producer:
     image: scalablesystems/flink:2.3.0-scalafree
-    depends_on:
-      - kafka
+    depends_on: [kafka]
     volumes:
       - ./data:/data:ro
     environment:
       INPUT: ${TICKS_INPUT:-/data/mock}
-      SPEED: ${SPEED:-500}
-      MAX_GAP_S: ${MAX_GAP_S:-300}
-      LOOP: ${LOOP:-false}
+      SPEED: ${SPEED:-1000}
+      MAX_GAP_S: ${MAX_GAP_S:-60}
+      LOOP: ${LOOP:-true}
       PARTITIONS: ${PARTITIONS:-12}
-    command: ["java", "-cp", "/jobs/scalable-systems-0.1.0.jar", "tick.TickPublisher"]
+    command: java -cp /jobs/scalable-systems-0.1.0.jar tick.TickPublisher
 
   jobmanager:
-    # Multi-stage build: an sbt stage assembles the fat JAR, the runtime stage
-    # is stock Flink minus flink-scala_2.12 with the JAR baked in at /jobs.
     build:
       context: ./scala
       dockerfile: docker/Dockerfile
     image: scalablesystems/flink:2.3.0-scalafree
     command: jobmanager
     ports:
-      - "8081:8081" # web dashboard + REST submission
-    volumes:
-      - ./data/full:/data:ro
-      - ./data/mock:/mock_data:ro
-      - ./output:/out
+      - "8081:8081"
     environment:
-      - |
-        FLINK_PROPERTIES=
+      FLINK_PROPERTIES: |
         jobmanager.rpc.address: jobmanager
         jobmanager.memory.process.size: 1600m
-        parallelism.default: 1
-        rest.flamegraph.enabled: true
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/8081' || exit 1"]
       interval: 10s
@@ -64,25 +47,17 @@ services:
       start_period: 20s
 
   taskmanager:
-    # Same image as the jobmanager, which owns the `build:`.
     image: scalablesystems/flink:2.3.0-scalafree
     command: taskmanager
     depends_on:
       jobmanager:
         condition: service_healthy
-    volumes:
-      - ./data/full:/data:ro
-      - ./data/mock:/mock_data:ro
-      - ./output:/out
     environment:
-      - |
-        FLINK_PROPERTIES=
+      FLINK_PROPERTIES: |
         jobmanager.rpc.address: jobmanager
         taskmanager.memory.process.size: 4096m
         taskmanager.numberOfTaskSlots: 4
 
-  # One-shot: waits for the cluster, then submits the baked-in JAR so
-  # `docker compose up --build` needs no manual submission step.
   submit:
     image: scalablesystems/flink:2.3.0-scalafree
     depends_on:
@@ -90,38 +65,21 @@ services:
         condition: service_healthy
       kafka:
         condition: service_started
-      producer:
-        condition: service_started
-    environment:
-      - |
-        FLINK_PROPERTIES=
-        jobmanager.rpc.address: jobmanager
-        rest.address: jobmanager
-    command:
-      - bash
-      - -c
-      - |
-        until flink list >/dev/null 2>&1; do sleep 2; done
-        flink run -p 4 -c tick.EmaJob /jobs/scalable-systems-0.1.0.jar
-    restart: "no"
+    command: bash -c "until flink list -m jobmanager:8081 >/dev/null 2>&1; do sleep 2; done && flink run -m jobmanager:8081 -p 4 -c tick.EmaJob /jobs/scalable-systems-0.1.0.jar"
 
   server:
     build: ./server
     ports:
       - "3001:3001"
-    depends_on:
-      - kafka
+    depends_on: [kafka]
     environment:
-      - KAFKA_BOOTSTRAP=kafka:9092
-      # The UI's simulation clock runs at the replay speed.
-      - SPEED=${SPEED:-500}
+      KAFKA_BOOTSTRAP: kafka:9092
+      SPEED: ${SPEED:-1000}
 
   client:
     build: ./client
     ports:
       - "5173:5173"
+    depends_on: [server]
     environment:
-      # Inside the compose network the API is reachable as the "server" service.
-      - API_URL=http://server:3001
-    depends_on:
-      - server
+      API_URL: http://server:3001

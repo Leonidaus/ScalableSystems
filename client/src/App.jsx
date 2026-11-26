@@ -8,9 +8,6 @@ export default function App() {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const [clock, setClock] = useState('');
-
-  // Simulation clock: the replay's data time, advanced at SPEED times the
-  // wall-clock pace since the first result arrived.
   const [status, setStatus] = useState(null);
 
   useEffect(() => {
@@ -22,7 +19,7 @@ export default function App() {
           clearInterval(timer);
         }
       } catch {
-        // Server not up yet; try again on the next tick.
+        // server not up yet, try again on the next tick
       }
     }, 500);
     return () => clearInterval(timer);
@@ -30,7 +27,9 @@ export default function App() {
 
   useEffect(() => {
     const timer = setInterval(() => {
-      if (status && typeof status.speed === 'number') {
+      if (!status) {
+        setClock('');
+      } else if (typeof status.speed === 'number') {
         const ms = status.dataStart + (Date.now() - status.startedAt) * status.speed;
         setClock(
           new Date(ms).toLocaleString('en-GB', {
@@ -40,20 +39,16 @@ export default function App() {
             hour: '2-digit',
             minute: '2-digit',
             second: '2-digit',
-          }) + ` (sim, ${status.speed}×)`
+          }) + ` (sim, ${status.speed}x)`
         );
-      } else if (status) {
-        setClock('max speed');
       } else {
-        setClock('');
+        setClock('max speed');
       }
     }, 1000);
     return () => clearInterval(timer);
   }, [status]);
 
-  // Symbols appear gradually as the Flink job produces each one's first
-  // result (on real data only a handful exist in the first windows), so
-  // keep refreshing the list for as long as the page is open.
+  // symbols appear gradually as the job produces each one's first result
   useEffect(() => {
     const timer = setInterval(async () => {
       try {
@@ -63,14 +58,14 @@ export default function App() {
           setSymbol((s) => s || list[0]);
         }
       } catch {
-        // Server not up yet; try again on the next tick.
+        // server not up yet, try again on the next tick
       }
     }, 2000);
     return () => clearInterval(timer);
   }, []);
 
-  // A plain dropdown cannot hold 5504 symbols; recommend matches while the
-  // user types, prefix hits ranked before plain substring hits.
+  // a dropdown can't hold 5000+ symbols, so match while typing,
+  // prefix hits ranked before substring hits
   const q = query.trim().toLowerCase();
   const starts = [];
   const contains = [];
@@ -87,10 +82,10 @@ export default function App() {
   };
 
   return (
-    <div style={{ fontFamily: 'sans-serif', padding: 16 }}>
+    <div style={{ padding: 16 }}>
       <h1 style={{ display: 'flex', justifyContent: 'space-between' }}>
-        Trading Indicators
-        <span style={{ color: '#666', fontWeight: 'normal', fontSize: '0.6em' }}>{clock}</span>
+        Live EMA signals
+        <span style={{ fontSize: '0.6em' }}>{clock}</span>
       </h1>
       <label>
         Symbol:{' '}
@@ -104,8 +99,7 @@ export default function App() {
             setOpen(true);
           }}
           onFocus={() => setOpen(true)}
-          // Firing on mousedown (not click) lets a match win the race with
-          // the input's blur, which closes the list.
+          // onMouseDown wins the race against the input's blur
           onBlur={() => setOpen(false)}
           onKeyDown={(e) => {
             if (e.key === 'ArrowDown') {
@@ -153,13 +147,13 @@ export default function App() {
       )}
       {symbol ? (
         <>
-          <p style={{ color: '#666' }}>Showing: {symbol}</p>
+          <p>Showing: {symbol}</p>
           <Chart symbol={symbol} />
         </>
       ) : (
-        <p style={{ color: '#666' }}>
-          No tickers yet — the Flink job takes ~15 s to start after
-          `docker compose up`, and the first windows close after 5 minutes of
+        <p>
+          No tickers yet, the Flink job takes ~15 s to start after
+          docker compose up, and the first windows close after 5 minutes of
           data time (a few seconds at replay speeds). This page updates
           itself, no reload needed.
         </p>
