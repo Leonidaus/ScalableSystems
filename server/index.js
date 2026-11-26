@@ -16,8 +16,6 @@ const rowsBySymbol = new Map();
 // One entry per connected client waiting for live rows of its symbol.
 const listeners = new Set();
 
-// Wall-clock moment of the first indexed row, i.e. when results started
-// flowing; the UI's simulation clock counts from here at SPEED times the pace.
 // Wall-clock moment of the first indexed row and its data time; the UI's
 // simulation clock extrapolates from there at SPEED times the pace.
 let firstRow = null; // {wall, data}

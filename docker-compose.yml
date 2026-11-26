@@ -18,9 +18,9 @@ services:
       # on first write with 3 partitions; 'ticks' is created by the producer.
       KAFKA_NUM_PARTITIONS: 3
 
-  # Scala producer: replays the mock CSVs into the 'ticks' topic forever,
-  # paced by the data's arrival times (SPEED=1000: a trading day in ~30 s).
-  # Real data: TICKS_INPUT=/data/full SPEED=max LOOP=false.
+  # Scala producer: replays the mock CSVs into the 'ticks' topic,
+  # paced by the data's arrival times.
+  # Real data: TICKS_INPUT=/data/full SPEED=500 LOOP=false.
   producer:
     image: scalablesystems/flink:2.3.0-scalafree
     depends_on:
@@ -29,9 +29,9 @@ services:
       - ./data:/data:ro
     environment:
       INPUT: ${TICKS_INPUT:-/data/mock}
-      SPEED: ${SPEED:-1000}
+      SPEED: ${SPEED:-500}
       MAX_GAP_S: ${MAX_GAP_S:-300}
-      LOOP: ${LOOP:-true}
+      LOOP: ${LOOP:-false}
       PARTITIONS: ${PARTITIONS:-12}
     command: ["java", "-cp", "/jobs/scalable-systems-0.1.0.jar", "tick.TickPublisher"]
 
@@ -114,7 +114,7 @@ services:
     environment:
       - KAFKA_BOOTSTRAP=kafka:9092
       # The UI's simulation clock runs at the replay speed.
-      - SPEED=${SPEED:-1000}
+      - SPEED=${SPEED:-500}
 
   client:
     build: ./client

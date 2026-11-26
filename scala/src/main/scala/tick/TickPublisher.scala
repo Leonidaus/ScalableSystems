@@ -12,11 +12,9 @@ import org.apache.kafka.common.errors.TopicExistsException
 import scala.jdk.CollectionConverters._
 
 /**
- * Streams the DEBS CSVs line by line into a Kafka topic, then loops.
- * Only trade lines are published (~22% of the real data), cut after the last
- * column the job reads; they stay raw CSV, so parsing stays in the Flink job.
- * SPEED paces publishing by the lines' arrival timestamps (1 = real time,
- * N = N times faster, max = as fast as possible); see [[ReplayClock]].
+ * Streams the DEBS CSVs line by line into a Kafka topic.
+ * Only trade lines are published, cut after the last column the job reads;
+ * they stay raw CSV, so parsing stays in the Flink job.
  */
 object TickPublisher {
 
@@ -24,11 +22,10 @@ object TickPublisher {
     val bootstrap = sys.env.getOrElse("KAFKA_BOOTSTRAP", "kafka:9092")
     val topic     = sys.env.getOrElse("TOPIC", "ticks")
     val inputDir  = Paths.get(sys.env.getOrElse("INPUT", "/data/mock"))
-    val speed     = parseSpeed(sys.env.getOrElse("SPEED", "1000"))
+    val speed     = parseSpeed(sys.env.getOrElse("SPEED", "500"))
     // Data gaps longer than this (nights, the weekend) are shortened to it; 0 keeps them.
     val maxGapS   = sys.env.getOrElse("MAX_GAP_S", "300").toLong
     val loop      = sys.env.getOrElse("LOOP", "false").toBoolean
-    // Caps the job's source parallelism: one Kafka partition per subtask at most.
     val partitions = sys.env.getOrElse("PARTITIONS", "12").toInt
 
     val csvs = listCsvs(inputDir)
@@ -54,9 +51,6 @@ object TickPublisher {
       if (speed > 0) s"publishing at ${speed}x the data's pace, gaps capped at ${maxGapS}s"
       else "publishing at max speed")
     var pass = 0
-    // The mock data is a single week, so the producer replays it forever to
-    // keep the pipeline streaming. A real deployment would consume a live
-    // feed instead of looping over files.
     do {
       pass += 1
       clock.reset()

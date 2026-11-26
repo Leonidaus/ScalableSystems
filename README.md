@@ -7,26 +7,41 @@ over 5-minute tumbling windows.
 ## Data flow
 
 ```
-data/mock/*.csv  ->  tick.TickPublisher  ->  Kafka 'ticks'  ->  tick.EmaJob  ->  5-min windows  ->  EMA38/100 + crossover  ->  Kafka 'ema-results' (every window)
-one week of ticks      Scala producer          12 partitions      Flink job    per symbol close   keyed fold                  Kafka 'advisories'  (BUY/SELL only)
-                      replays forever                                                                                   |
-                                                                                                                        v
-                                                                               server (kafkajs consumer, per-symbol index)  <-  history + live rows over WebSocket
-                                                                                                                                                        |
-                                                                                                                                                        v
-                                                                                                                                        client (React + lightweight-charts)
+data/mock/*.csv                    one week of ticks
+       │
+       ▼
+tick.TickPublisher                 Scala producer, paced replay
+       │
+       ▼
+Kafka 'ticks'                      raw CSV trade lines, 12 partitions
+       │
+       ▼
+tick.EmaJob  (Flink)
+   ├─ parse                        CSV line → TickEvent
+   ├─ 5-min tumbling windows       per symbol, emits the window's close
+   └─ KeyedEmaFold                 EMA38 / EMA100 + BUY/SELL crossover
+       │
+       ├────────────────────────────────┐
+       ▼                                ▼
+Kafka 'ema-results'                Kafka 'advisories'
+every window                       BUY/SELL only
+       │
+       ▼
+server  (Node, kafkajs)            per-symbol index of EMA rows
+       │  WebSocket: history, then live rows
+       ▼
+client  (React + Chart.js)
 ```
 
-The producer republishes the mock CSVs' trade lines, forever. The Flink job
+The producer republishes the mock CSVs' trade lines. The Flink job
 consumes the topic, parses each line into a `TickEvent`, groups events by
 symbol, and buckets each symbol's ticks into 5-minute event-time tumbling
 windows. Each window emits one result: the last trade by event time in that
 window (the window's close). A keyed fold (`KeyedEmaFold`) then chains each
-symbol's closes into the spec's EMA38/EMA100 — seeded EMA₀ = 0, skipping any
-close whose window start is not after the last folded one (replay passes) —
-flags crossovers between consecutive windows as BUY/SELL advisories. Every 
-`EmaResult` snapshot goes to the `ema-results` topic, the crossovers alone to 
-`advisories`; both are keyed by symbol with JSON values:
+symbol's closes into the spec's EMA38/EMA100 (EMA₀ = 0) and flags crossovers 
+between consecutive windows as BUY/SELL advisories. Every `EmaResult` snapshot
+goes to the `ema-results` topic, the crossovers alone to `advisories`;
+both are keyed by symbol with JSON values:
 
 ```json
 {"symbol":"RDSA.NL","window_start":"2021-11-08T08:00:00Z","window_end":"2021-11-08T08:05:00Z","close":20.5328,"ema38":1.0529641025641026,"ema100":0.406590099009901,"advisory":"BUY"}
@@ -52,7 +67,7 @@ Real data instead of mock: download the DEBS CSVs (~25 GB, gitignored) into
 ```sh
 scripts/download-data.sh                 # all 7 days; or e.g. scripts/download-data.sh 08-11-21
 docker compose down                      # start from an empty 'ticks' topic
-TICKS_INPUT=/data/full SPEED=1000 LOOP=false docker compose up -d --build
+TICKS_INPUT=/data/full SPEED=500 docker compose up -d --build
 ```
 
 ### Replay speed
@@ -64,16 +79,16 @@ idleness timeout (10 s) runs on wall-clock time, so at very low speeds which
 late events get dropped can differ from a max-speed run.
 
 - `SPEED` — `1` real time, `N` N× faster, `max` (or `0`) no pacing.
-  Compose default `1000` (a mock trading day in ~30 s); the code's default is `max`.
+  Default `500`.
 - `MAX_GAP_S` — data gaps longer than this many seconds (nights, the weekend)
-  are shortened to it; `0` keeps them. Compose default `60`, code default `300`.
+  are shortened to it; `0` keeps them. Default `300`.
 
 Every 10 s the producer logs the trades sent, the achieved rate and, when paced,
 the current data time and how far behind schedule it is (`lag`).
 
 No tools needed on the host — the fat JAR is built by an sbt stage inside
 Docker (`scala/docker/Dockerfile`). Flink dashboard: http://localhost:8081
-(`server` on :3001 and `client` on :5173 also start, still fed by mock data).
+(`server` on :3001 and `client` on :5173 also start)
 
 ## Correctness validation
 
@@ -99,27 +114,6 @@ python3 scripts/compare.py output/ref-real.csv output/actual-real.csv data/sampl
 On 08-11-21 (40 symbols, 511k lines): 2009/2009 evaluated windows match
 exactly (closes, EMAs, advisories); 59k non-trade lines are filtered
 identically by both sides; 20 of 38 symbols cross empty windows between
-trades (the EMA carries forward, E0.4); the 2 bid/ask-only symbols produce
-no output. Only BUY advisories can fire within one day from the EMA₀ = 0
-seed; the SELL path is covered by `CrossoverTest`/`EmaFolderTest`.
-
-## TODO
-
-1. **EMA per symbol (Query 1)** — done: `KeyedEmaFold` folds each window
-   close into `EMA_j(w) = Close(w)·2/(1+j) + EMA_j(w−1)·(1−2/(1+j))`, j ∈ {38,
-   100}, EMA₀ = 0, in keyed per-symbol state, skipping closes whose window
-   start (`windowStart = ts − ts % 300000`) is not after the last folded one —
-   folding a window twice or out of order would corrupt the chain. Window
-   lateness defaults to 0 (`ALLOWED_LATENESS`, ISO-8601), so state stays O(1)
-   per symbol. Unit tests: `EmaFolderTest`,
-   `EmaJobPipelineTest`.
-2. **Crossover advisories (Query 2)** — done: `EmaMath.crossover` flags BUY
-   when EMA38 crosses above EMA100 and SELL on the reverse, comparing window
-   w and w−1 (Eqs. 1–4), published to the `advisories` topic. Unit tests:
-   `CrossoverTest`, `EmaFolderTest`, `EmaResultJsonTest`.
-3. **Visualization** — feed advisories/EMAs to the server+client (currently
-   replaying generated mock data) by consuming `ema-results`/`advisories`.
-4. **Full dataset** — run over `data/full/` (289M events) for the
-   performance-evaluation section of the report.
-5. **Report** — 4-5 pages, ACM template: architecture, implementation,
-   performance (correctness, scalability, resource utilization).
+trades; the 2 bid/ask-only symbols produce no output. Only BUY advisories 
+can fire within one day from the EMA₀ = 0 seed; the SELL path is covered by
+`CrossoverTest`/`EmaFolderTest`.

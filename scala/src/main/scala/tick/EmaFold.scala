@@ -23,9 +23,7 @@ object EmaMath {
 }
 
 /**
- * Advisory values. Plain strings rather than case objects or Option: records
- * fall back to Kryo, which deserializes Scala singletons into fresh instances
- * and breaks `==` against them.
+ * Advisory values.
  */
 object Advisory {
   val Buy  = "BUY"
@@ -48,16 +46,8 @@ final case class EmaResult(
  * Folds per-window closes into the spec's EMA38/EMA100 chain for a single
  * symbol: `EMA_j(w) = Close(w)·2/(1+j) + EMA_j(w−1)·(1−2/(1+j))`, seeded with
  * EMA = 0 on the first window, and detects crossovers between consecutive
- * folded windows. Taken literally, the seed makes every symbol's first window
- * a BUY (0 ≤ 0 before, EMA38 > EMA100 after for any positive close). 
- * Windows with no events never produce a close, so the chain simply carries 
- * the previous EMA forward across them.
- *
- * A symbol's windows fire in event-time order, so a close whose window start
- * is not after the last folded one is a duplicate or a stray late firing
- * (e.g. a replay pass, or a window re-fired under allowed lateness). Folding
- * it would corrupt the chain, so it is skipped. State stays O(1) per symbol
- * no matter how many windows the run covers.
+ * folded windows. Windows with no events never produce a close, so the 
+ * chain simply carries the previous EMA forward across them.
  */
 final class EmaFolder {
 
